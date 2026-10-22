@@ -1,0 +1,24 @@
+{
+  "name": "barbershop-queue-backend",
+  "version": "1.0.0",
+  "description": "REST API สำหรับระบบเรียกคิวร้านตัดผม",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "db:setup": "node scripts/setup-db.js",
+    "db:migrate": "node scripts/db-migrate.js",
+    "line:richmenu": "node scripts/line-richmenu.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "pg": "^8.12.0",
+    "qrcode": "^1.5.4"
+  }
+}
