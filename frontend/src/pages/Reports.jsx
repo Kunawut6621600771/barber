@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -6,12 +6,25 @@ import {
 import { api, downloadCsv } from '../api/client.js';
 import { useToast } from '../context/ToastContext.jsx';
 import { Card, Stat, Empty, Loading, Avatar, baht, minutes, dateOf, SOURCE_LABEL } from '../components/ui.jsx';
+import { useTheme } from '../context/ThemeContext.jsx';
 
 const TABS = [
   { key: 'customers', label: 'จำนวนลูกค้า', path: '/reports/customers' },
   { key: 'wait-time', label: 'เวลารอเฉลี่ย', path: '/reports/wait-time' },
   { key: 'barbers', label: 'การให้บริการของช่าง', path: '/reports/barbers' },
+  { key: 'sales', label: 'ยอดขาย (POS)', path: '/reports/sales' },
+  { key: 'inventory', label: 'สต็อกสินค้า', path: '/reports/inventory' },
 ];
+
+const METHOD_TH = {
+  cash: 'เงินสด', promptpay: 'QR พร้อมเพย์', card: 'บัตร',
+  transfer: 'โอน', points: 'แต้ม', other: 'อื่น ๆ',
+};
+
+const MOVE_TH = {
+  sale: 'ขายออก', restock: 'รับเข้า', adjust: 'ปรับยอด',
+  refund: 'คืนสินค้า', void: 'ยกเลิกบิล', damage: 'ของเสีย',
+};
 
 const PIE_COLORS = ['#111827', '#dc2626', '#2563eb', '#16a34a', '#d97706'];
 const iso = (d) => d.toLocaleDateString('en-CA');
@@ -28,7 +41,8 @@ export default function Reports() {
     setLoading(true);
     try {
       const path = TABS.find((t) => t.key === tab).path;
-      setData(await api.get(path, { from, to }));
+      // ผูกข้อมูลไว้กับแท็บที่ขอ กันไม่ให้ render ข้อมูลของแท็บเก่าตอนกำลังสลับ
+      setData({ tab, payload: await api.get(path, { from, to }) });
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -46,7 +60,9 @@ export default function Reports() {
 
   const exportCsv = async () => {
     try {
-      await downloadCsv('/reports/export', { type: tab, from, to }, `${tab}-${from}-to-${to}.csv`);
+      // ยอดขายมี endpoint ส่งออกของตัวเอง (คนละชุดข้อมูลกับรายงานคิว)
+      const exportPath = tab === 'sales' ? '/reports/sales/export' : '/reports/export';
+      await downloadCsv(exportPath, { type: tab, from, to }, `${tab}-${from}-to-${to}.csv`);
       toast.ok('ดาวน์โหลดรายงานเรียบร้อยแล้ว');
     } catch (err) {
       toast.error(err.message);
@@ -60,7 +76,7 @@ export default function Reports() {
           <h1>รายงาน</h1>
           <div className="sub">สรุปผลการดำเนินงานระหว่าง {dateOf(from)} — {dateOf(to)}</div>
         </div>
-        <button className="btn dark" onClick={exportCsv}>⤓ ส่งออก CSV</button>
+        <button className="btn dark" onClick={exportCsv} disabled={tab === 'inventory'}>⤓ ส่งออก CSV</button>
       </div>
 
       <Card tight className="mt-2">
@@ -84,11 +100,13 @@ export default function Reports() {
       </Card>
 
       <div className="mt-4">
-        {loading ? <Loading rows={6} />
-          : !data ? <Card><Empty title="โหลดรายงานไม่สำเร็จ" /></Card>
-            : tab === 'customers' ? <CustomersReport data={data} />
-              : tab === 'wait-time' ? <WaitTimeReport data={data} />
-                : <BarbersReport data={data} />}
+        {loading || data?.tab !== tab ? <Loading rows={6} />
+          : !data.payload ? <Card><Empty title="โหลดรายงานไม่สำเร็จ" /></Card>
+            : tab === 'customers' ? <CustomersReport data={data.payload} />
+              : tab === 'wait-time' ? <WaitTimeReport data={data.payload} />
+                : tab === 'sales' ? <SalesReport data={data.payload} />
+                  : tab === 'inventory' ? <InventoryReport data={data.payload} />
+                    : <BarbersReport data={data.payload} />}
       </div>
     </div>
   );
@@ -338,6 +356,215 @@ function BarbersReport({ data }) {
             </tbody>
           </table>
         </div>
+      </Card>
+    </>
+  );
+}
+
+/* ------------------------- รายงานยอดขาย (POS) ------------------------- */
+function SalesReport({ data }) {
+  const { isDark } = useTheme();
+  const grid = isDark ? '#2b3344' : '#e5e7eb';
+  const axis = isDark ? '#7b8699' : '#9ca3af';
+  const line = isDark ? '#ef4444' : '#dc2626';
+
+  const s = data.summary;
+  const chart = data.daily.map((r) => ({
+    ...r,
+    label: new Date(r.sale_date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }),
+    net_total: Number(r.net_total),
+  }));
+  const pie = data.payment_methods.map((m) => ({ name: METHOD_TH[m.method] || m.method, value: Number(m.total) }));
+
+  return (
+    <>
+      <div className="grid grid-4">
+        <Stat label="จำนวนบิล" value={s.bills} unit="บิล" icon="🧾" />
+        <Stat label="ยอดขายสุทธิ" value={baht(s.net_total)} icon="💰" />
+        <Stat label="ยอดเฉลี่ยต่อบิล" value={baht(s.avg_bill)} icon="📊" />
+        <Stat label="ส่วนลดที่ให้ไป" value={baht(Number(s.discount) + Number(s.points_discount))} icon="🏷" />
+      </div>
+
+      <div className="grid grid-2 mt-4">
+        <Card title="ยอดขายรายวัน" subtitle="ยอดสุทธิหลังหักคืนเงิน">
+          <ResponsiveContainer width="100%" height={260}>
+            <AreaChart data={chart} margin={{ top: 4, right: 6, left: -12, bottom: 0 }}>
+              <defs>
+                <linearGradient id="sl" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={line} stopOpacity={0.3} />
+                  <stop offset="100%" stopColor={line} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke={grid} vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke={axis} />
+              <YAxis tick={{ fontSize: 11 }} stroke={axis} />
+              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} formatter={(v) => baht(v)} />
+              <Area type="monotone" dataKey="net_total" name="ยอดสุทธิ" stroke={line} fill="url(#sl)" strokeWidth={2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </Card>
+
+        <Card title="แยกตามวิธีชำระเงิน">
+          {pie.length === 0 ? <Empty icon="💳" title="ยังไม่มีข้อมูลการชำระเงิน" /> : (
+            <ResponsiveContainer width="100%" height={260}>
+              <PieChart>
+                <Pie data={pie} dataKey="value" nameKey="name" innerRadius={55} outerRadius={92} paddingAngle={2}>
+                  {pie.map((entry, i) => <Cell key={entry.name} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                </Pie>
+                <Tooltip formatter={(v) => baht(v)} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </Card>
+      </div>
+
+      <div className="grid grid-2 mt-4">
+        <Card title="ขายดีที่สุด" subtitle="บริการและสินค้ารวมกัน" tight>
+          {data.top_items.length === 0 ? <Empty icon="📦" title="ยังไม่มียอดขาย" /> : (
+            <div className="table-wrap">
+              <table className="data">
+                <thead>
+                  <tr><th>รายการ</th><th>ประเภท</th><th className="right">จำนวน</th><th className="right">ยอดขาย</th></tr>
+                </thead>
+                <tbody>
+                  {data.top_items.map((it) => (
+                    <tr key={`${it.kind}-${it.name}`}>
+                      <td className="bold">{it.name}</td>
+                      <td><span className="badge">{it.kind === 'service' ? 'บริการ' : 'สินค้า'}</span></td>
+                      <td className="right mono">{it.qty}</td>
+                      <td className="right mono bold">{baht(it.revenue)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+
+        <Card title="ยอดขายแยกตามช่าง" tight>
+          {data.by_barber.length === 0 ? <Empty icon="✂" title="ยังไม่มีข้อมูล" /> : (
+            <div className="table-wrap">
+              <table className="data">
+                <thead>
+                  <tr><th>ช่าง</th><th className="right">บิล</th><th className="right">รายการ</th><th className="right">ยอดขาย</th></tr>
+                </thead>
+                <tbody>
+                  {data.by_barber.map((b) => (
+                    <tr key={b.barber_id}>
+                      <td>
+                        <div className="bold small">{b.barber_name}</div>
+                        <div className="tiny muted">{b.code}</div>
+                      </td>
+                      <td className="right mono">{b.bills}</td>
+                      <td className="right mono">{b.items}</td>
+                      <td className="right mono bold">{baht(b.revenue)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {data.promo_usage.length > 0 && (
+        <Card title="การใช้โค้ดส่วนลด" className="mt-4" tight>
+          <div className="table-wrap">
+            <table className="data">
+              <thead><tr><th>โค้ด</th><th className="right">ใช้ไป</th><th className="right">ส่วนลดรวม</th></tr></thead>
+              <tbody>
+                {data.promo_usage.map((p) => (
+                  <tr key={p.promo_code}>
+                    <td className="bold mono">{p.promo_code}</td>
+                    <td className="right mono">{p.uses} ครั้ง</td>
+                    <td className="right mono">{baht(p.discount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+    </>
+  );
+}
+
+/* --------------------------- รายงานสต็อก --------------------------- */
+function InventoryReport({ data }) {
+  const v = data.stock_value;
+
+  return (
+    <>
+      <div className="grid grid-4">
+        <Stat label="สินค้าที่ตัดสต็อก" value={v.products} unit="รายการ" icon="📦" />
+        <Stat label="จำนวนคงเหลือรวม" value={Number(v.units).toLocaleString('th-TH')} unit="ชิ้น" icon="🔢" />
+        <Stat label="มูลค่าต้นทุน" value={baht(v.cost_value)} icon="💰" />
+        <Stat label="มูลค่าขาย" value={baht(v.retail_value)} icon="🏷" />
+      </div>
+
+      <div className="grid grid-2 mt-4">
+        <Card title="สินค้าใกล้หมด" subtitle="ถึงจุดเตือนที่ตั้งไว้แล้ว ควรสั่งเพิ่ม" tight>
+          {data.low_stock.length === 0 ? (
+            <Empty icon="✅" title="สต็อกเพียงพอทุกรายการ" />
+          ) : (
+            <div className="table-wrap">
+              <table className="data">
+                <thead>
+                  <tr><th>สินค้า</th><th>หมวด</th><th className="right">คงเหลือ</th><th className="right">จุดเตือน</th></tr>
+                </thead>
+                <tbody>
+                  {data.low_stock.map((p) => (
+                    <tr key={p.id}>
+                      <td>
+                        <div className="bold small">{p.name}</div>
+                        <div className="tiny muted">{p.sku || '—'}</div>
+                      </td>
+                      <td className="tiny">{p.category}</td>
+                      <td className="right"><span className="badge warn">{p.stock_qty}</span></td>
+                      <td className="right mono muted">{p.low_stock_level}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+
+        <Card title="สินค้าที่ขายช้า" subtitle="ขายได้น้อยที่สุดในช่วงที่เลือก" tight>
+          {data.slow_movers.length === 0 ? <Empty icon="📦" title="ยังไม่มีข้อมูล" /> : (
+            <div className="table-wrap">
+              <table className="data">
+                <thead><tr><th>สินค้า</th><th className="right">ขายได้</th><th className="right">คงเหลือ</th></tr></thead>
+                <tbody>
+                  {data.slow_movers.map((p) => (
+                    <tr key={p.id}>
+                      <td>
+                        <div className="bold small">{p.name}</div>
+                        <div className="tiny muted">{p.sku || '—'}</div>
+                      </td>
+                      <td className="right mono">{p.sold_qty}</td>
+                      <td className="right mono">{p.stock_qty}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <Card title="การเคลื่อนไหวสต็อกในช่วงที่เลือก" className="mt-4">
+        {data.movements.length === 0 ? <Empty icon="📋" title="ไม่มีการเคลื่อนไหว" /> : (
+          <div className="dl">
+            {data.movements.map((m) => (
+              <Fragment key={m.reason}>
+                <dt>{MOVE_TH[m.reason] || m.reason}</dt>
+                <dd>{m.units} ชิ้น ({m.entries} ครั้ง)</dd>
+              </Fragment>
+            ))}
+          </div>
+        )}
       </Card>
     </>
   );

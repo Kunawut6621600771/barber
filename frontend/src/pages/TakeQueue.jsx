@@ -4,7 +4,7 @@ import { api } from '../api/client.js';
 import { useToast } from '../context/ToastContext.jsx';
 import { Card, Empty, Loading, Alert, baht } from '../components/ui.jsx';
 import PaymentPanel from '../components/PaymentPanel.jsx';
-import LineConnectCard from '../components/LineConnectCard.jsx';
+import LineQrCard from '../components/LineQrCard.jsx';
 
 const ICONS = { 'ตัดผม': '✂', 'สระผม': '🧴', 'โกนหนวด': '🪒', 'ทำสีผม': '🎨' };
 
@@ -138,7 +138,11 @@ export default function TakeQueue() {
             </div>
           </Card>
 
-          <LineConnectCard compact className="mt-3" />
+          <LineQrCard
+            ticketId={result.ticket.id}
+            className="mt-3"
+            title="รับแจ้งเตือนเมื่อถึงคิวของคุณ"
+          />
         </div>
       </div>
     );

@@ -1,8 +1,10 @@
 /**
  * สร้างเมนูด้านล่างห้องแชท (Rich menu) ของ LINE OA แล้วตั้งเป็นเมนูหลัก
- *   ปุ่มซ้าย  : เปิดแอป (LIFF) หน้า "รับบัตรคิว"
- *   ปุ่มกลาง  : ส่งข้อความ "คิวของฉัน"  -> บอทตอบสถานะคิว
- *   ปุ่มขวา   : ส่งข้อความ "คิวตอนนี้" -> บอทตอบสถานะหน้าร้าน
+ * เมนู 6 ปุ่ม (2 แถว x 3 คอลัมน์):
+ *   รับบัตรคิว (เปิด LIFF) · คิวของฉัน · คิวตอนนี้
+ *   จองล่วงหน้า · บริการ/ราคา · แต้มของฉัน
+ *
+ * สร้างรูปก่อนด้วย:  node scripts/line-richmenu-image.js
  *
  *   npm run line:richmenu
  * ต้องตั้ง LINE_CHANNEL_ACCESS_TOKEN และ LIFF_ID ใน .env ก่อน
@@ -31,17 +33,30 @@ async function run() {
   if (!token) throw new Error('ยังไม่ได้ตั้ง LINE_CHANNEL_ACCESS_TOKEN ใน backend/.env');
   if (!config.line.liffId) console.warn('! ยังไม่ได้ตั้ง LIFF_ID ปุ่ม "รับบัตรคิว" จะเปิดเว็บปกติแทน');
 
-  const W = 2500; const H = 843; const w = Math.floor(W / 3);
+  const W = 2500; const H = 1686; const CW = Math.floor(W / 3); const CH = Math.floor(H / 2);
+  const cell = (i) => ({
+    x: (i % 3) * CW,
+    y: Math.floor(i / 3) * CH,
+    width: i % 3 === 2 ? W - CW * 2 : CW,
+    height: Math.floor(i / 3) === 1 ? H - CH : CH,
+  });
+
+  // ต้องเรียงให้ตรงกับรูปที่สร้างจาก scripts/line-richmenu-image.js
+  const actions = [
+    { type: 'uri', label: 'รับบัตรคิว', uri: appUrl('/app/take-queue') },
+    { type: 'message', label: 'คิวของฉัน', text: 'คิวของฉัน' },
+    { type: 'message', label: 'คิวตอนนี้', text: 'คิวตอนนี้' },
+    { type: 'message', label: 'จองล่วงหน้า', text: 'จองคิว' },
+    { type: 'message', label: 'บริการ/ราคา', text: 'ราคา' },
+    { type: 'message', label: 'แต้มของฉัน', text: 'แต้มของฉัน' },
+  ];
+
   const menu = {
     size: { width: W, height: H },
     selected: true,
     name: 'Trim & Co. main menu',
-    chatBarText: 'เมนูคิว',
-    areas: [
-      { bounds: { x: 0, y: 0, width: w, height: H }, action: { type: 'uri', label: 'รับบัตรคิว', uri: appUrl('/app/take-queue') } },
-      { bounds: { x: w, y: 0, width: w, height: H }, action: { type: 'message', label: 'คิวของฉัน', text: 'คิวของฉัน' } },
-      { bounds: { x: w * 2, y: 0, width: W - w * 2, height: H }, action: { type: 'message', label: 'คิวตอนนี้', text: 'คิวตอนนี้' } },
-    ],
+    chatBarText: 'เมนูร้าน',
+    areas: actions.map((action, i) => ({ bounds: cell(i), action })),
   };
 
   // ลบเมนูเก่าที่สคริปต์นี้เคยสร้างไว้

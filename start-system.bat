@@ -28,6 +28,11 @@ if defined NEWDB (
   pushd "%~dp0backend"
   node scripts/setup-db.js
   popd
+) else (
+  echo   Applying database migrations...
+  pushd "%~dp0backend"
+  node scripts/db-migrate.js
+  popd
 )
 echo [2/4] Starting backend (port 5050)...
 start "Barbershop Backend" cmd /k "cd /d "%~dp0backend" && npm run dev"

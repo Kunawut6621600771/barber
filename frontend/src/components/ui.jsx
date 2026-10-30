@@ -137,7 +137,8 @@ export function ConfirmModal({ open, title, message, confirmText = 'ยืนย
         </>
       )}
     >
-      <p>{message}</p>
+      {/* div ไม่ใช่ p เพราะบางหน้าส่ง JSX ที่มี block element เข้ามาเป็น message */}
+      <div>{message}</div>
     </Modal>
   );
 }

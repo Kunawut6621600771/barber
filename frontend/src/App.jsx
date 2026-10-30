@@ -19,6 +19,13 @@ import Board from './pages/Board.jsx';
 import TrackTicket from './pages/TrackTicket.jsx';
 import Payments from './pages/Payments.jsx';
 import Liff from './pages/Liff.jsx';
+import Pos from './pages/Pos.jsx';
+import Products from './pages/Products.jsx';
+import Sales from './pages/Sales.jsx';
+import Shifts from './pages/Shifts.jsx';
+import Members from './pages/Members.jsx';
+import SettingsPage from './pages/Settings.jsx';
+import Book from './pages/Book.jsx';
 
 function FullPageLoader() {
   return (
@@ -87,6 +94,19 @@ export default function App() {
                 <Protected roles={['admin', 'staff', 'barber']}><Payments /></Protected>} />
               <Route path="reports" element={
                 <Protected roles={['admin', 'staff', 'barber']}><Reports /></Protected>} />
+              <Route path="pos" element={
+                <Protected roles={['admin', 'staff', 'barber']}><Pos /></Protected>} />
+              <Route path="sales" element={
+                <Protected roles={['admin', 'staff', 'barber']}><Sales /></Protected>} />
+              <Route path="products" element={
+                <Protected roles={['admin', 'staff', 'barber']}><Products /></Protected>} />
+              <Route path="shifts" element={
+                <Protected roles={['admin', 'staff', 'barber']}><Shifts /></Protected>} />
+              <Route path="members" element={
+                <Protected roles={['admin', 'staff', 'barber']}><Members /></Protected>} />
+              <Route path="settings" element={
+                <Protected roles={['admin', 'staff']}><SettingsPage /></Protected>} />
+              <Route path="book" element={<Book />} />
               <Route path="services" element={<Services />} />
               <Route path="my-queue" element={<MyQueue />} />
               <Route path="take-queue" element={<TakeQueue />} />

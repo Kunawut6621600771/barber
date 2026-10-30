@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client.js';
 import { useRealtime } from '../api/realtime.js';
-import { Card, Alert, baht } from './ui.jsx';
+import { Card, Alert, baht, dateTimeOf } from './ui.jsx';
+import LineQrCard from './LineQrCard.jsx';
 
 /** ย่อรูปสลิปก่อนส่ง (ด้านยาวไม่เกิน 1600px) ให้ส่งเร็วและไม่เกินขนาดที่ API รับได้ */
 async function fileToDataUrl(file) {
@@ -126,10 +127,32 @@ export default function PaymentPanel({ payment, testMode, onPaid, onCancel }) {
           <div>
             <div className="eyebrow-dark">ชำระเงินผ่าน QR PromptPay</div>
             <div className="pay-amount">{baht(payment.amount)}</div>
-            <div className="small muted">{payment.service_name}{payment.barber_name ? ` · ช่าง ${payment.barber_name}` : ''}</div>
+            <div className="small muted">เลขอ้างอิง {payment.ref_code}</div>
           </div>
           <div className={`pay-timer ${expired ? 'expired' : left < 120000 ? 'soon' : ''}`}>
             {expired ? 'QR หมดเวลา' : <>เหลือเวลา <b>{text}</b></>}
+          </div>
+        </div>
+
+        {/* บิลรายการ — ให้ลูกค้าตรวจก่อนโอน */}
+        <div className="pay-bill">
+          <div className="pay-bill-head">
+            <span className="bold">รายการที่สั่ง</span>
+            <span className="tiny muted">{dateTimeOf(payment.created_at)}</span>
+          </div>
+          <div className="pay-bill-line">
+            <div className="grow">
+              <div className="bold">{payment.service_name}</div>
+              <div className="tiny muted">
+                {payment.duration_min ? `ใช้เวลาประมาณ ${payment.duration_min} นาที` : 'บริการของร้าน'}
+                {payment.barber_name ? ` · ช่าง ${payment.barber_name}` : ' · ช่างคนไหนว่างก่อนก็ได้'}
+              </div>
+            </div>
+            <span className="mono">{baht(payment.amount)}</span>
+          </div>
+          <div className="pay-bill-total">
+            <span>รวมที่ต้องชำระ</span>
+            <span className="mono">{baht(payment.amount)}</span>
           </div>
         </div>
 
@@ -178,6 +201,9 @@ export default function PaymentPanel({ payment, testMode, onPaid, onCancel }) {
           <span className="tiny muted">มีปัญหา? แจ้งพนักงานพร้อมเลขอ้างอิง {payment.ref_code}</span>
         </div>
       </Card>
+
+      {/* สแกนครั้งเดียว แล้วรับแจ้งเตือนตอนถึงคิวทาง LINE */}
+      <LineQrCard className="mt-3" />
     </div>
   );
 }

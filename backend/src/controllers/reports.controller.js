@@ -213,3 +213,165 @@ export const exportCsv = asyncHandler(async (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="${spec.file}-${from}-to-${to}.csv"`);
   res.send('﻿' + csv); // BOM เพื่อให้ Excel อ่านภาษาไทยถูกต้อง
 });
+
+/* ===================================================================== */
+/*  รายงานฝั่ง POS (ยอดขาย / สินค้า / ช่าง / กะ)                          */
+/* ===================================================================== */
+
+const rangeOf = (req, defaultDays = 30) => ({
+  from: req.query.from || shopDaysAgo(defaultDays - 1),
+  to: req.query.to || shopToday(),
+});
+
+/** GET /api/reports/sales?from=&to= — สรุปยอดขายรวม + รายวัน + แยกวิธีจ่าย */
+export const salesReport = asyncHandler(async (req, res) => {
+  const { from, to } = rangeOf(req);
+
+  const [summary, daily, methods, topItems, byBarber, discounts] = await Promise.all([
+    query(
+      `SELECT COUNT(*)::int                        AS bills,
+              COALESCE(SUM(subtotal), 0)           AS subtotal,
+              COALESCE(SUM(discount_amount), 0)    AS discount,
+              COALESCE(SUM(points_discount), 0)    AS points_discount,
+              COALESCE(SUM(tax_amount), 0)         AS tax,
+              COALESCE(SUM(total), 0)              AS total,
+              COALESCE(SUM(refunded_amount), 0)    AS refunded,
+              COALESCE(SUM(total - refunded_amount), 0) AS net_total,
+              COALESCE(AVG(total), 0)              AS avg_bill,
+              COALESCE(SUM(points_earned), 0)::int AS points_earned
+         FROM sales
+        WHERE sale_date BETWEEN $1 AND $2 AND status IN ('paid','partial_refund','refunded')`,
+      [from, to],
+    ),
+    query(
+      `SELECT g.day::date AS sale_date,
+              COALESCE(d.bills, 0)     AS bills,
+              COALESCE(d.total, 0)     AS total,
+              COALESCE(d.net_total, 0) AS net_total,
+              COALESCE(d.discount, 0)  AS discount
+         FROM generate_series($1::date, $2::date, INTERVAL '1 day') g(day)
+         LEFT JOIN v_sales_daily d ON d.sale_date = g.day::date
+        ORDER BY g.day`,
+      [from, to],
+    ),
+    query(
+      `SELECT sp.method, COUNT(*)::int AS count, COALESCE(SUM(sp.amount), 0) AS total
+         FROM sale_payments sp JOIN sales s ON s.id = sp.sale_id
+        WHERE s.sale_date BETWEEN $1 AND $2 AND s.status IN ('paid','partial_refund','refunded')
+        GROUP BY sp.method ORDER BY total DESC`,
+      [from, to],
+    ),
+    query(
+      `SELECT kind, name, SUM(qty)::int AS qty, SUM(revenue) AS revenue
+         FROM v_item_sales WHERE sale_date BETWEEN $1 AND $2
+        GROUP BY kind, name ORDER BY revenue DESC LIMIT 15`,
+      [from, to],
+    ),
+    query(
+      `SELECT barber_id, code, barber_name,
+              SUM(bills)::int AS bills, SUM(items)::int AS items, SUM(revenue) AS revenue
+         FROM v_barber_sales WHERE sale_date BETWEEN $1 AND $2
+        GROUP BY barber_id, code, barber_name ORDER BY revenue DESC`,
+      [from, to],
+    ),
+    query(
+      `SELECT promo_code, COUNT(*)::int AS uses, COALESCE(SUM(discount_amount), 0) AS discount
+         FROM sales
+        WHERE sale_date BETWEEN $1 AND $2 AND promo_code IS NOT NULL
+          AND status IN ('paid','partial_refund','refunded')
+        GROUP BY promo_code ORDER BY discount DESC`,
+      [from, to],
+    ),
+  ]);
+
+  res.json({
+    range: { from, to },
+    summary: summary.rows[0],
+    daily: daily.rows,
+    payment_methods: methods.rows,
+    top_items: topItems.rows,
+    by_barber: byBarber.rows,
+    promo_usage: discounts.rows,
+  });
+});
+
+/** GET /api/reports/inventory — มูลค่าสต็อก + สินค้าใกล้หมด + ของที่เคลื่อนไหวช้า */
+export const inventoryReport = asyncHandler(async (req, res) => {
+  const { from, to } = rangeOf(req);
+
+  const [value, low, slow, movements] = await Promise.all([
+    query(
+      `SELECT COUNT(*)::int                          AS products,
+              COALESCE(SUM(stock_qty), 0)::int       AS units,
+              COALESCE(SUM(stock_qty * cost_price), 0) AS cost_value,
+              COALESCE(SUM(stock_qty * price), 0)      AS retail_value
+         FROM products WHERE is_active = TRUE AND track_stock = TRUE`,
+    ),
+    query(
+      `SELECT id, sku, name, category, stock_qty, low_stock_level
+         FROM products
+        WHERE is_active = TRUE AND track_stock = TRUE AND stock_qty <= low_stock_level
+        ORDER BY stock_qty, name`,
+    ),
+    query(
+      `SELECT p.id, p.sku, p.name, p.stock_qty,
+              COALESCE(sold.qty, 0)::int AS sold_qty
+         FROM products p
+         LEFT JOIN (
+             SELECT si.product_id, SUM(si.qty) AS qty
+               FROM sale_items si JOIN sales s ON s.id = si.sale_id
+              WHERE si.kind = 'product' AND s.sale_date BETWEEN $1 AND $2
+                AND s.status IN ('paid','partial_refund','refunded')
+              GROUP BY si.product_id
+         ) sold ON sold.product_id = p.id
+        WHERE p.is_active = TRUE AND p.track_stock = TRUE AND p.stock_qty > 0
+        ORDER BY COALESCE(sold.qty, 0), p.stock_qty DESC LIMIT 15`,
+      [from, to],
+    ),
+    query(
+      `SELECT m.reason, SUM(ABS(m.change_qty))::int AS units, COUNT(*)::int AS entries
+         FROM stock_movements m
+        WHERE m.created_at::date BETWEEN $1 AND $2
+        GROUP BY m.reason ORDER BY units DESC`,
+      [from, to],
+    ),
+  ]);
+
+  res.json({
+    range: { from, to },
+    stock_value: value.rows[0],
+    low_stock: low.rows,
+    slow_movers: slow.rows,
+    movements: movements.rows,
+  });
+});
+
+/** GET /api/reports/sales/export?from=&to= — ดาวน์โหลดบิลเป็น CSV */
+export const exportSalesCsv = asyncHandler(async (req, res) => {
+  const { from, to } = rangeOf(req);
+
+  const { rows } = await query(
+    `SELECT bill_no, sale_date, TO_CHAR(paid_at, 'HH24:MI') AS paid_time, status,
+            customer_name, cashier_name, barber_name, item_count,
+            subtotal, discount_amount, points_discount, tax_amount, total,
+            refunded_amount, points_earned, promo_code, note
+       FROM v_sale_detail
+      WHERE sale_date BETWEEN $1 AND $2
+      ORDER BY sale_date, bill_no`,
+    [from, to],
+  );
+
+  const headers = [
+    'เลขที่บิล', 'วันที่', 'เวลา', 'สถานะ', 'ลูกค้า', 'พนักงานขาย', 'ช่าง', 'จำนวนรายการ',
+    'ยอดก่อนลด', 'ส่วนลด', 'ส่วนลดแต้ม', 'ภาษี', 'ยอดสุทธิ', 'คืนเงิน', 'แต้มที่ได้', 'โค้ด', 'หมายเหตุ',
+  ];
+  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csv = [
+    headers.join(','),
+    ...rows.map((r) => Object.values(r).map(esc).join(',')),
+  ].join('\n');
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="sales-${from}_${to}.csv"`);
+  res.send(`﻿${csv}`);           // BOM ให้ Excel อ่านภาษาไทยได้
+});

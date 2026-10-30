@@ -10,12 +10,13 @@
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
-import { query, shopToday } from '../db.js';
+import { query } from '../db.js';
 import { ApiError, asyncHandler } from '../utils/http.js';
 import {
-  lineEnabled, liffEnabled, verifySignature, verifyIdToken, replyMessage,
-  queueCard, quickReply, appUrl, addFriendUrl,
+  lineEnabled, liffEnabled, verifySignature, verifyIdToken, appUrl, addFriendUrl, pushMessage,
 } from '../utils/line.js';
+import { handleEvent } from '../utils/line-bot.js';
+import { linkQrPayload } from '../utils/line-link.js';
 
 const sha256 = (v) => crypto.createHash('sha256').update(v).digest('hex');
 
@@ -145,6 +146,44 @@ export const unlinkLine = asyncHandler(async (req, res) => {
   res.json({ message: 'ยกเลิกการเชื่อมต่อ LINE แล้ว' });
 });
 
+/**
+ * GET /api/line/link-qr?ticket_id= — QR สำหรับสแกนผูกบัญชี LINE
+ *
+ * ลูกค้าสแกนด้วยมือถือ -> LINE เปิดห้องแชทร้านพร้อมข้อความที่มีรหัส -> กดส่ง -> ผูกให้อัตโนมัติ
+ * หน้าเว็บเรียกซ้ำเป็นระยะเพื่อเช็กว่าผูกสำเร็จหรือยัง (ดูค่า linked)
+ */
+export const linkQr = asyncHandler(async (req, res) => {
+  const { rows } = await query(
+    'SELECT line_user_id, line_display_name, line_picture_url FROM users WHERE id = $1', [req.user.id],
+  );
+  const u = rows[0] || {};
+
+  if (u.line_user_id) {
+    return res.json({
+      linked: true,
+      display_name: u.line_display_name || null,
+      picture_url: u.line_picture_url || null,
+    });
+  }
+
+  if (!lineEnabled()) {
+    return res.json({ linked: false, available: false, reason: 'ร้านยังไม่ได้ตั้งค่า LINE Official Account' });
+  }
+  if (!config.line.botBasicId) {
+    return res.json({ linked: false, available: false, reason: 'ร้านยังไม่ได้ตั้งค่า LINE_BOT_BASIC_ID' });
+  }
+
+  const ticketId = req.query.ticket_id ? Number(req.query.ticket_id) : null;
+  const payload = await linkQrPayload(req.user.id, Number.isInteger(ticketId) ? ticketId : null);
+
+  return res.json({
+    linked: false,
+    available: true,
+    add_friend_url: addFriendUrl(),
+    ...payload,
+  });
+});
+
 /** GET /api/line/me — สถานะการเชื่อม LINE ของฉัน */
 export const myLine = asyncHandler(async (req, res) => {
   const { rows } = await query(
@@ -162,127 +201,8 @@ export const myLine = asyncHandler(async (req, res) => {
 
 /* ------------------------------------------------------------------ */
 /*  Webhook                                                           */
+/*  ตรรกะการตอบลูกค้าอยู่ใน utils/line-bot.js                           */
 /* ------------------------------------------------------------------ */
-
-async function myQueueMessage(lineUserId) {
-  const { rows: users } = await query('SELECT id, full_name FROM users WHERE line_user_id = $1', [lineUserId]);
-  const user = users[0];
-  if (!user) {
-    return queueCard({
-      title: 'ยังไม่ได้เชื่อมบัญชี',
-      message: 'เปิดแอปของร้านเพื่อเข้าสู่ระบบด้วย LINE แล้วระบบจะแจ้งเตือนคิวให้คุณที่นี่',
-      buttonLabel: 'เปิดแอป / รับบัตรคิว',
-      path: '/app/take-queue',
-    });
-  }
-
-  const { rows } = await query(
-    `SELECT * FROM v_queue_board
-      WHERE customer_id = $1 AND queue_date = $2 AND status IN ('waiting','called','serving')
-      ORDER BY seq LIMIT 1`,
-    [user.id, shopToday()],
-  );
-  const t = rows[0];
-  if (!t) {
-    return queueCard({
-      title: 'คุณยังไม่มีคิววันนี้',
-      message: 'กดปุ่มด้านล่างเพื่อเลือกบริการ ชำระเงิน และรับบัตรคิวได้ทันที',
-      buttonLabel: 'รับบัตรคิว',
-      path: '/app/take-queue',
-    });
-  }
-
-  const { rows: ahead } = await query(
-    `SELECT COUNT(*)::int AS n FROM queue_tickets
-      WHERE queue_date = $1 AND status = 'waiting' AND position < $2`,
-    [t.queue_date, t.position ?? 0],
-  );
-  const { rows: est } = await query('SELECT estimate_wait_minutes($1,$2) AS mins', [t.queue_date, t.position ?? 1]);
-
-  const statusText = { waiting: 'รอคิว', called: 'ถึงคิวแล้ว! เชิญที่เคาน์เตอร์', serving: 'กำลังให้บริการ' }[t.status];
-  return queueCard({
-    title: statusText,
-    ticketNo: t.ticket_no,
-    tone: t.status === 'called' ? 'danger' : 'brand',
-    rows: [
-      ['บริการ', t.service_name],
-      ...(t.status === 'waiting' ? [['เหลืออีก', `${ahead[0].n} คิว`], ['รอประมาณ', `${est[0].mins} นาที`]] : []),
-      ...(t.barber_name ? [['ช่าง', t.barber_name]] : []),
-    ],
-  });
-}
-
-async function shopStatusMessage() {
-  const { rows } = await query(
-    `SELECT COUNT(*) FILTER (WHERE status='waiting')::int AS waiting,
-            (SELECT ticket_no FROM queue_tickets WHERE queue_date=$1 AND status='serving' ORDER BY started_at DESC LIMIT 1) AS serving,
-            (SELECT ticket_no FROM queue_tickets WHERE queue_date=$1 AND status='called' ORDER BY called_at DESC LIMIT 1) AS called
-       FROM queue_tickets WHERE queue_date = $1`,
-    [shopToday()],
-  );
-  const s = rows[0];
-  return queueCard({
-    title: 'สถานะคิวหน้าร้านตอนนี้',
-    rows: [
-      ['กำลังเรียก', s.called || '—'],
-      ['กำลังให้บริการ', s.serving || '—'],
-      ['คิวที่รออยู่', `${s.waiting} คิว`],
-    ],
-    buttonLabel: 'รับบัตรคิว',
-    path: '/app/take-queue',
-  });
-}
-
-const helpMessage = () => ({
-  type: 'text',
-  text: 'สวัสดีครับ 💈 พิมพ์หรือกดเมนูด้านล่างได้เลย\n• "คิวของฉัน" ดูสถานะคิว\n• "คิวตอนนี้" ดูคิวหน้าร้าน\n• "รับคิว" เปิดแอปเพื่อรับบัตรคิว',
-  quickReply: quickReply(),
-});
-
-async function handleEvent(event) {
-  const userId = event.source?.userId;
-
-  if (event.type === 'follow') {
-    return replyMessage(event.replyToken, [
-      queueCard({
-        title: 'ยินดีต้อนรับสู่ Trim & Co.',
-        message: 'รับบัตรคิว จ่ายผ่าน QR และรับแจ้งเตือนเมื่อใกล้ถึงคิวได้ในแชทนี้ กดปุ่มด้านล่างเพื่อเริ่มใช้งาน',
-        buttonLabel: 'เปิดแอป / รับบัตรคิว',
-        path: '/app/take-queue',
-      }),
-      helpMessage(),
-    ]);
-  }
-
-  if (event.type === 'unfollow' && userId) {
-    // บล็อก OA แล้วส่งข้อความไม่ได้ -> เลิกผูกไว้ก่อน
-    await query('UPDATE users SET line_user_id = NULL, line_linked_at = NULL WHERE line_user_id = $1', [userId]);
-    return null;
-  }
-
-  if (event.type === 'message' && event.message?.type === 'text') {
-    const text = event.message.text.trim().toLowerCase();
-    let msg;
-    if (/คิวของฉัน|คิวฉัน|สถานะ|my ?queue/.test(text)) msg = await myQueueMessage(userId);
-    else if (/คิวตอนนี้|หน้าร้าน|now/.test(text)) msg = await shopStatusMessage();
-    else if (/รับคิว|จองคิว|รับบัตร|book/.test(text)) {
-      msg = queueCard({
-        title: 'รับบัตรคิวออนไลน์',
-        message: 'เลือกบริการ สแกนจ่ายด้วย QR PromptPay แล้วรับบัตรคิวได้ทันที',
-        buttonLabel: 'รับบัตรคิว',
-        path: '/app/take-queue',
-      });
-    } else return replyMessage(event.replyToken, helpMessage());
-    return replyMessage(event.replyToken, { ...msg, quickReply: quickReply() });
-  }
-
-  if (event.type === 'postback') {
-    const data = new URLSearchParams(event.postback?.data || '');
-    if (data.get('action') === 'my_queue') return replyMessage(event.replyToken, await myQueueMessage(userId));
-    if (data.get('action') === 'shop') return replyMessage(event.replyToken, await shopStatusMessage());
-  }
-  return null;
-}
 
 /** POST /api/line/webhook — ต้องได้ raw body (ตั้งไว้ใน server.js) */
 export async function webhook(req, res) {
@@ -305,5 +225,61 @@ export async function webhook(req, res) {
   }
   return undefined;
 }
+
+/* ------------------------------------------------------------------ */
+/*  ประวัติแชท (ให้แอดมินตามอ่านในเว็บ)                                 */
+/* ------------------------------------------------------------------ */
+
+/** GET /api/line/messages?line_user_id= — ข้อความล่าสุดจากลูกค้า */
+export const listLineMessages = asyncHandler(async (req, res) => {
+  const params = [];
+  let where = '';
+  if (req.query.line_user_id) {
+    params.push(req.query.line_user_id);
+    where = `WHERE m.line_user_id = $${params.length}`;
+  }
+
+  const { rows } = await query(
+    `SELECT m.*, u.full_name, u.line_display_name
+       FROM line_messages m LEFT JOIN users u ON u.id = m.user_id
+      ${where}
+      ORDER BY m.created_at DESC LIMIT 200`,
+    params,
+  );
+  res.json({ data: rows.reverse() });
+});
+
+/** GET /api/line/threads — ลูกค้าที่คุยกับบอทล่าสุด */
+export const listLineThreads = asyncHandler(async (_req, res) => {
+  const { rows } = await query(
+    `SELECT DISTINCT ON (m.line_user_id)
+            m.line_user_id, m.created_at AS last_at, m.text AS last_text, m.intent,
+            u.id AS user_id, u.full_name, u.line_display_name, u.line_picture_url
+       FROM line_messages m LEFT JOIN users u ON u.id = m.user_id
+      WHERE m.line_user_id IS NOT NULL AND m.direction = 'in'
+      ORDER BY m.line_user_id, m.created_at DESC`,
+  );
+  rows.sort((a, b) => new Date(b.last_at) - new Date(a.last_at));
+  res.json({ data: rows.slice(0, 100) });
+});
+
+/** POST /api/line/push — พนักงานส่งข้อความหาลูกค้าทาง LINE */
+export const pushToCustomer = asyncHandler(async (req, res) => {
+  const text = String(req.body?.text || '').trim();
+  const target = String(req.body?.line_user_id || '').trim();
+
+  if (!text) throw ApiError.badRequest('กรุณาพิมพ์ข้อความ');
+  if (!target) throw ApiError.badRequest('ไม่พบผู้รับ');
+  if (!lineEnabled()) throw ApiError.badRequest('ร้านยังไม่ได้ตั้งค่า LINE Messaging API');
+
+  await pushMessage(target, { type: 'text', text: text.slice(0, 1800) });
+  await query(
+    `INSERT INTO line_messages (line_user_id, user_id, direction, intent, text)
+     VALUES ($1, (SELECT id FROM users WHERE line_user_id = $1), 'out', 'staff_reply', $2)`,
+    [target, text.slice(0, 2000)],
+  );
+
+  res.json({ message: 'ส่งข้อความถึงลูกค้าแล้ว' });
+});
 
 export { appUrl };

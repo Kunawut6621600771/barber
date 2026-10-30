@@ -52,6 +52,17 @@ export async function replyMessage(replyToken, messages) {
   return call('/message/reply', { replyToken, messages: [].concat(messages).slice(0, 5) });
 }
 
+/** โปรไฟล์ผู้ใช้จาก LINE (ใช้ตอนผูกบัญชีผ่าน QR) */
+export async function getProfile(lineUserId) {
+  if (!lineEnabled() || !lineUserId) return null;
+  const res = await fetch(`${API}/profile/${encodeURIComponent(lineUserId)}`, {
+    headers: { Authorization: `Bearer ${config.line.channelAccessToken}` },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) return null;
+  return res.json().catch(() => null);
+}
+
 /** ตรวจลายเซ็น webhook: base64(HMAC-SHA256(channelSecret, rawBody)) */
 export function verifySignature(rawBody, signature) {
   if (!config.line.channelSecret || !signature) return false;

@@ -4,6 +4,7 @@ import { useAuth, ROLE_LABEL } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { Card, Field, PasswordInput, Switch, Avatar, Alert } from '../components/ui.jsx';
 import LineConnectCard from '../components/LineConnectCard.jsx';
+import LineQrCard from '../components/LineQrCard.jsx';
 
 export default function Profile() {
   const { user, setUser, refreshUser } = useAuth();
@@ -162,6 +163,7 @@ export default function Profile() {
           </Card>
 
           <LineConnectCard />
+          <LineQrCard compact className="mt-3" title="หรือสแกน QR เพื่อเชื่อมบัญชี" />
 
           {['admin', 'staff'].includes(user.role) && (
             <Card title="QR Code หน้าร้าน" subtitle="พิมพ์ติดไว้หน้าร้านให้ลูกค้าสแกนรับบัตรคิว">

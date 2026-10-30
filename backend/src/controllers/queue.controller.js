@@ -144,8 +144,17 @@ export async function issueTicket(client, {
 /* ======================= แสดงคิว ======================= */
 
 /** GET /api/queue?date=&status= — กระดานคิวทั้งหมดของวัน */
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** วันที่จาก query string ที่เชื่อถือได้ (ค่าแปลก ๆ ควรตอบ 400 ไม่ใช่ 500 จาก Postgres) */
+function queryDate(value) {
+  if (!value) return today();
+  if (!DATE_RE.test(String(value))) throw ApiError.badRequest('รูปแบบวันที่ไม่ถูกต้อง (YYYY-MM-DD)');
+  return String(value);
+}
+
 export const listQueue = asyncHandler(async (req, res) => {
-  const queueDate = req.query.date || today();
+  const queueDate = queryDate(req.query.date);
   const params = [queueDate];
   let statusSql = '';
 
@@ -466,7 +475,7 @@ export const finishService = asyncHandler(async (req, res) => {
 
 /** POST /api/queue/reorder — จัดลำดับคิวอัตโนมัติ */
 export const reorderQueue = asyncHandler(async (req, res) => {
-  const queueDate = req.body?.date || today();
+  const queueDate = queryDate(req.body?.date);
   const tickets = await withTransaction((client) => refreshQueue(client, queueDate));
   res.json({ message: 'จัดลำดับคิวใหม่เรียบร้อยแล้ว', data: tickets });
 });

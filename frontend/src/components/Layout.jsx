@@ -5,21 +5,30 @@ import { useToast } from '../context/ToastContext.jsx';
 import { useRealtime } from '../api/realtime.js';
 import { api } from '../api/client.js';
 import { Avatar, Modal, dateTimeOf } from './ui.jsx';
+import { ThemeToggle } from '../context/ThemeContext.jsx';
 
 const STAFF_NAV = [
-  { to: '/app/dashboard', label: 'Dashboard', th: 'ภาพรวม', icon: '▦' },
-  { to: '/app/queue', label: 'Queue', th: 'คิว', icon: '≡', key: 'waiting' },
-  { to: '/app/payments', label: 'Payments', th: 'การชำระเงิน', icon: '฿' },
-  { to: '/app/users', label: 'Users', th: 'ผู้ใช้งาน', icon: '👥', roles: ['admin', 'staff'] },
-  { to: '/app/services', label: 'Services', th: 'บริการ', icon: '✂' },
-  { to: '/app/reports', label: 'Reports', th: 'รายงาน', icon: '▤' },
+  { to: '/app/dashboard', th: 'ภาพรวม', icon: '▦' },
+  { to: '/app/queue', th: 'คิว', icon: '≡', key: 'waiting' },
+  { to: '/app/pos', th: 'ขายหน้าร้าน (POS)', icon: '🛒', group: 'ขาย' },
+  { to: '/app/sales', th: 'ประวัติการขาย', icon: '🧾', group: 'ขาย' },
+  { to: '/app/products', th: 'สินค้าและสต็อก', icon: '📦', group: 'ขาย' },
+  { to: '/app/shifts', th: 'กะและเงินสด', icon: '💵', group: 'ขาย' },
+  { to: '/app/payments', th: 'ชำระผ่าน QR', icon: '฿', group: 'ขาย' },
+  { to: '/app/book', th: 'จองล่วงหน้า', icon: '📅', group: 'ลูกค้า' },
+  { to: '/app/members', th: 'สมาชิก / แต้ม', icon: '⭐', group: 'ลูกค้า' },
+  { to: '/app/users', th: 'ผู้ใช้งาน', icon: '👥', group: 'ลูกค้า', roles: ['admin', 'staff'] },
+  { to: '/app/services', th: 'บริการ', icon: '✂', group: 'จัดการ' },
+  { to: '/app/reports', th: 'รายงาน', icon: '▤', group: 'จัดการ' },
+  { to: '/app/settings', th: 'ตั้งค่าร้าน', icon: '⚙', group: 'จัดการ', roles: ['admin', 'staff'] },
 ];
 
 const CUSTOMER_NAV = [
-  { to: '/app/my-queue', label: 'คิวของฉัน', icon: '🎫' },
-  { to: '/app/take-queue', label: 'รับบัตรคิว', icon: '＋' },
-  { to: '/app/services', label: 'บริการ', icon: '✂' },
-  { to: '/app/profile', label: 'ข้อมูลส่วนตัว', icon: '👤' },
+  { to: '/app/my-queue', th: 'คิวของฉัน', icon: '🎫' },
+  { to: '/app/take-queue', th: 'รับบัตรคิว', icon: '＋' },
+  { to: '/app/book', th: 'จองล่วงหน้า', icon: '📅' },
+  { to: '/app/services', th: 'บริการและราคา', icon: '✂' },
+  { to: '/app/profile', th: 'ข้อมูลส่วนตัว', icon: '👤' },
 ];
 
 export default function Layout() {
@@ -33,6 +42,7 @@ export default function Layout() {
   const [unread, setUnread] = useState(0);
   const [panelOpen, setPanelOpen] = useState(false);
   const [waitingCount, setWaitingCount] = useState(0);
+  const [shopName, setShopName] = useState('Trim & Co.');
 
   const staff = isStaffRole(user?.role);
   const nav = (staff ? STAFF_NAV : CUSTOMER_NAV).filter((i) => !i.roles || i.roles.includes(user.role));
@@ -53,6 +63,11 @@ export default function Layout() {
   }, []);
 
   useEffect(() => { loadNotifications(); }, [loadNotifications]);
+  useEffect(() => {
+    api.get('/settings/public')
+      .then((d) => d.shop_name && setShopName(d.shop_name))
+      .catch(() => { /* ใช้ชื่อเริ่มต้นไปก่อน */ });
+  }, []);
   useEffect(() => { if (staff) loadWaiting(); }, [staff, loadWaiting, location.pathname]);
   useEffect(() => { setOpen(false); }, [location.pathname]);
 
@@ -81,23 +96,28 @@ export default function Layout() {
     <div className="app-shell">
       <aside className={`sidebar ${open ? 'open' : ''}`}>
         <div className="sidebar-brand">
-          <div className="mark">T</div>
+          <div className="mark">{shopName.trim()[0] || 'T'}</div>
           <div>
-            <div className="name">Trim &amp; Co.</div>
+            <div className="name">{shopName}</div>
             <div className="sub">{staff ? 'Management Console' : 'ระบบเรียกคิว'}</div>
           </div>
         </div>
 
         <nav className="col gap-1">
-          {nav.map((item) => (
-            <NavLink key={item.to} to={item.to}
-              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-              <span aria-hidden>{item.icon}</span>
-              <span>{item.th || item.label}</span>
-              {item.key === 'waiting' && waitingCount > 0 && (
-                <span className="badge-count">{waitingCount}</span>
+          {nav.map((item, i) => (
+            <div key={item.to}>
+              {item.group && item.group !== nav[i - 1]?.group && (
+                <div className="nav-group-label">{item.group}</div>
               )}
-            </NavLink>
+              <NavLink to={item.to}
+                className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+                <span aria-hidden>{item.icon}</span>
+                <span>{item.th}</span>
+                {item.key === 'waiting' && waitingCount > 0 && (
+                  <span className="badge-count">{waitingCount}</span>
+                )}
+              </NavLink>
+            </div>
           ))}
         </nav>
 
@@ -147,6 +167,7 @@ export default function Layout() {
 
           <div className="grow" />
 
+          <ThemeToggle />
           <button className="icon-btn" onClick={() => { setPanelOpen(true); loadNotifications(); }} aria-label="การแจ้งเตือน">
             🔔{unread > 0 && <span className="dot">{unread > 9 ? '9+' : unread}</span>}
           </button>

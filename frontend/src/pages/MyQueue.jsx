@@ -7,7 +7,7 @@ import {
   Card, StatusBadge, Empty, Loading, ConfirmModal,
   baht, timeOf, dateOf, sinceMinutes, SOURCE_LABEL,
 } from '../components/ui.jsx';
-import LineConnectCard from '../components/LineConnectCard.jsx';
+import LineQrCard from '../components/LineQrCard.jsx';
 
 export default function MyQueue() {
   const toast = useToast();
@@ -122,7 +122,7 @@ export default function MyQueue() {
           </div>
 
           <div className="col gap-4">
-            <LineConnectCard compact />
+            <LineQrCard ticketId={t.id} />
             <Card title="สถานะคิวหน้าร้าน" subtitle={`กำลังรอทั้งหมด ${board?.waiting_count ?? 0} คิว`} tight>
               {board?.now_serving?.length ? board.now_serving.map((q) => (
                 <div key={q.id} className="queue-row is-serving">

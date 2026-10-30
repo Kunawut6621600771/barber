@@ -1,6 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
+import helmet from 'helmet';
+import compression from 'compression';
+import rateLimit from 'express-rate-limit';
 import { config } from './config.js';
 import { pool } from './db.js';
 import routes from './routes/index.js';
@@ -10,12 +13,36 @@ import { webhook as lineWebhook } from './controllers/line.controller.js';
 const app = express();
 
 app.set('trust proxy', 1);
+app.disable('x-powered-by');
+
+// ส่ง API อย่างเดียว ไม่ได้เสิร์ฟ HTML เอง จึงปิด CSP ที่ไม่เกี่ยวออกเพื่อไม่ให้ชน LIFF
+app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+app.use(compression());
 app.use(cors({ origin: config.clientUrl.split(',').map((s) => s.trim()), credentials: true }));
+
 // LINE webhook ต้องใช้ raw body เพื่อตรวจลายเซ็น จึงต้องประกาศก่อน express.json()
 app.post('/api/line/webhook', express.raw({ type: '*/*', limit: '1mb' }), lineWebhook);
 // 8mb เผื่อรูปสลิปที่ส่งมาเป็น base64
 app.use(express.json({ limit: '8mb' }));
 app.use(morgan(config.env === 'production' ? 'combined' : 'dev'));
+
+/* ------------------------- Rate limiting -------------------------- */
+const limiter = (windowMs, max, message) => rateLimit({
+  windowMs,
+  max,
+  standardHeaders: true,
+  legacyHeaders: false,
+  // SSE เปิดค้างไว้ตลอด ไม่ควรโดนนับ
+  skip: (req) => req.path === '/notifications/stream',
+  message: { error: message },
+});
+
+// เดารหัสผ่าน / สแปมสมัครสมาชิก
+app.use('/api/auth/login', limiter(15 * 60_000, 20, 'พยายามเข้าสู่ระบบบ่อยเกินไป กรุณารอสักครู่'));
+app.use('/api/auth/register', limiter(60 * 60_000, 10, 'สมัครสมาชิกบ่อยเกินไป กรุณารอสักครู่'));
+app.use('/api/auth/forgot-password', limiter(60 * 60_000, 10, 'ขอรีเซ็ตรหัสผ่านบ่อยเกินไป กรุณารอสักครู่'));
+// กันยิง API รัว ๆ ทั้งระบบ (เผื่อหน้าจอที่ดึงข้อมูลถี่ไว้พอสมควร)
+app.use('/api', limiter(60_000, 600, 'มีคำขอเข้ามามากเกินไป กรุณารอสักครู่'));
 
 app.get('/api/health', async (_req, res) => {
   try {

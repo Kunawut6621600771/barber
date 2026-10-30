@@ -8,7 +8,8 @@ import { ApiError, asyncHandler } from '../utils/http.js';
 import { validate } from '../utils/validate.js';
 
 const USER_FIELDS = `u.id, u.full_name, u.email, u.phone, u.role, u.status,
-                     u.avatar_url, u.birth_date, u.note, u.last_login_at, u.created_at`;
+                     u.avatar_url, u.birth_date, u.note, u.last_login_at, u.created_at,
+                     u.loyalty_points, u.member_tier, u.total_spent, u.visit_count`;
 
 /** GET /api/users?role=&search=&status=&page=&limit= */
 export const listUsers = asyncHandler(async (req, res) => {
