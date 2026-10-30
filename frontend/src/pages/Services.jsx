@@ -4,11 +4,13 @@ import { api } from '../api/client.js';
 import { useToast } from '../context/ToastContext.jsx';
 import { useAuth, isStaffRole } from '../context/AuthContext.jsx';
 import {
-  Card, Stat, Empty, Loading, Modal, ConfirmModal, Field, Switch, baht,
+  Card, Stat, Empty, Loading, Modal, ConfirmModal, Field, Switch, ServiceThumb, baht,
+  SERVICE_ICONS as ICONS,
 } from '../components/ui.jsx';
 
-const ICONS = { 'ตัดผม': '✂', 'สระผม': '🧴', 'โกนหนวด': '🪒', 'ทำสีผม': '🎨' };
-const emptyForm = { name: '', category_id: '', description: '', duration_min: 30, price: 200, is_active: true };
+const emptyForm = {
+  name: '', category_id: '', description: '', duration_min: 30, price: 200, image_url: '', is_active: true,
+};
 
 export default function Services() {
   const toast = useToast();
@@ -66,7 +68,8 @@ export default function Services() {
   const openEdit = (s) => {
     setForm({
       name: s.name, category_id: s.category_id ?? '', description: s.description || '',
-      duration_min: s.duration_min, price: Number(s.price), is_active: s.is_active,
+      duration_min: s.duration_min, price: Number(s.price), image_url: s.image_url || '',
+      is_active: s.is_active,
     });
     setErrors({});
     setEditing(s);
@@ -81,6 +84,7 @@ export default function Services() {
         description: form.description,
         duration_min: Number(form.duration_min),
         price: Number(form.price),
+        image_url: form.image_url.trim(),
         is_active: form.is_active,
         ...(form.category_id ? { category_id: Number(form.category_id) } : {}),
       };
@@ -160,12 +164,12 @@ export default function Services() {
         <div className="grid grid-auto">
           {filtered.map((s) => (
             <div key={s.id} className="svc-card">
-              <div className="svc-thumb">{ICONS[s.category_name] || '✂'}</div>
+              <ServiceThumb service={s}>
+                {s.category_name && <span className="svc-tag">{s.category_name}</span>}
+                {!s.is_active && <span className="svc-tag right danger">ปิดใช้งาน</span>}
+              </ServiceThumb>
               <div className="body">
-                <div className="row-between">
-                  <div className="bold">{s.name}</div>
-                  {!s.is_active && <span className="badge danger">ปิดใช้งาน</span>}
-                </div>
+                <div className="bold">{s.name}</div>
                 <div className="small muted">{s.description || s.category_name || 'บริการทั่วไป'}</div>
                 <div className="row-between mt-2">
                   <div className="price">{baht(s.price)}</div>
@@ -231,6 +235,17 @@ export default function Services() {
             onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
         </Field>
 
+        <Field label="รูปภาพ (URL)" error={errors.image_url}
+          hint="ใส่ลิงก์รูป เช่น /services/skin-fade.webp หรือ https://… เว้นว่างไว้ได้">
+          <input className="input" value={form.image_url} placeholder="/services/xxx.webp"
+            onChange={(e) => setForm((f) => ({ ...f, image_url: e.target.value }))} />
+        </Field>
+        {form.image_url.trim() && (
+          <div className="svc-card" style={{ marginBottom: 14 }}>
+            <ServiceThumb key={form.image_url} service={{ name: form.name, image_url: form.image_url.trim() }} />
+          </div>
+        )}
+
         <div className="row-between">
           <div>
             <div className="bold small">เปิดให้ลูกค้าเลือกบริการนี้</div>
@@ -255,6 +270,8 @@ export default function Services() {
 
 /* ---------------------- จัดการประเภทบริการ ---------------------- */
 function CategoryModal({ open, onClose, categories, onChanged }) {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const toast = useToast();
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
@@ -300,7 +317,7 @@ function CategoryModal({ open, onClose, categories, onChanged }) {
             <div className="bold small">{ICONS[c.name] || '•'} {c.name}</div>
             <div className="tiny muted">{c.service_count} บริการ</div>
           </div>
-          <button className="btn sm ghost" onClick={() => remove(c)}>ลบ</button>
+          {isAdmin && <button className="btn sm ghost" onClick={() => remove(c)}>ลบ</button>}
         </div>
       ))}
     </Modal>

@@ -65,6 +65,14 @@ export default function Liff() {
           navigate(targetRef.current || home(u), { replace: true });
         } catch (err) {
           if (err instanceof ApiError && err.details?.code === 'not_linked') {
+            // สแกน QR หน้าร้าน -> ไปหน้าสมัครสมาชิกเลย สมัครเสร็จจะกลับมาหน้านี้เพื่อผูก LINE แล้วไปรับบัตรคิว
+            if (targetRef.current?.includes('src=qr')) {
+              navigate('/register', {
+                replace: true,
+                state: { from: `/liff?to=${encodeURIComponent(targetRef.current)}`, lineName: err.details.name },
+              });
+              return;
+            }
             setProfile({ name: err.details.name, picture: err.details.picture });
             setStep('choose');
             return;
@@ -101,11 +109,8 @@ export default function Liff() {
     <div className="liff-wrap">
       <div className="liff-card">
         <div className="liff-brand">
-          <div className="liff-logo">✂</div>
-          <div>
-            <div className="bold">Trim &amp; Co.</div>
-            <div className="tiny muted">ระบบเรียกคิวร้านตัดผม</div>
-          </div>
+          <img src="/logo.png" alt="ร้านตัดผมโครตซิ่ง" className="brand-logo" />
+          <div className="tiny">ระบบเรียกคิวร้านตัดผม</div>
         </div>
 
         {step === 'loading' && (
@@ -120,7 +125,7 @@ export default function Liff() {
             <Alert kind="error">{error}</Alert>
             <div className="col gap-2 mt-3">
               <button className="btn dark block" onClick={() => window.location.reload()}>ลองอีกครั้ง</button>
-              <Link className="btn block" to="/login">เข้าสู่ระบบด้วยอีเมล</Link>
+              <Link className="btn block" to="/login" state={{ emailOnly: true }}>เข้าสู่ระบบด้วยอีเมล</Link>
             </div>
           </>
         )}

@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -15,7 +18,7 @@ const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
 
-// ส่ง API อย่างเดียว ไม่ได้เสิร์ฟ HTML เอง จึงปิด CSP ที่ไม่เกี่ยวออกเพื่อไม่ให้ชน LIFF
+// ปิด CSP เพื่อไม่ให้ชน LIFF SDK / รูปโปรไฟล์ LINE ที่โหลดจากโดเมนของ LINE
 app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(compression());
 app.use(cors({ origin: config.clientUrl.split(',').map((s) => s.trim()), credentials: true }));
@@ -33,7 +36,8 @@ const limiter = (windowMs, max, message) => rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   // SSE เปิดค้างไว้ตลอด ไม่ควรโดนนับ
-  skip: (req) => req.path === '/notifications/stream',
+  // ชุดทดสอบอัตโนมัติ (NODE_ENV=test) สมัคร/ล็อกอินถี่ จึงไม่จำกัดเฉพาะตอนทดสอบ
+  skip: (req) => req.path === '/notifications/stream' || config.env === 'test',
   message: { error: message },
 });
 
@@ -54,13 +58,22 @@ app.get('/api/health', async (_req, res) => {
 });
 
 app.use('/api', routes);
+
+// production บนโฮสต์ที่รันได้แค่ Node app เดียว (เช่น Hostinger) -> เสิร์ฟหน้าเว็บที่ build แล้วด้วย
+const webDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../frontend/dist');
+if (config.env === 'production' && fs.existsSync(path.join(webDist, 'index.html'))) {
+  app.use(express.static(webDist, { index: false, maxAge: '7d' }));
+  // เส้นทางของ React Router ทุกหน้า (ยกเว้น /api) ส่ง index.html
+  app.get(/^\/(?!api(\/|$)).*/, (_req, res) => res.sendFile(path.join(webDist, 'index.html'), { maxAge: 0 }));
+}
+
 app.use(notFound);
 app.use(errorHandler);
 
 const server = app.listen(config.port, () => {
   console.log(`\n  ระบบเรียกคิวร้านตัดผม - API`);
   console.log(`  ▸ http://localhost:${config.port}/api`);
-  console.log(`  ▸ database: ${config.db.database}@${config.db.host}:${config.db.port}`);
+  console.log(`  ▸ database: ${config.db.connectionString ? `DATABASE_URL (${new URL(config.db.connectionString).host})` : `${config.db.database}@${config.db.host}:${config.db.port}`}`);
   console.log(`  ▸ client  : ${config.clientUrl}`);
   console.log(`  ▸ payment : ${config.payment.promptpayId ? `PromptPay ${config.payment.required ? '(บังคับจ่ายก่อนรับคิว)' : '(ไม่บังคับ)'} · ตรวจสลิป: ${config.payment.slipProvider}` : 'ยังไม่ได้ตั้ง PROMPTPAY_ID'}`);
   console.log(`  ▸ LINE    : bot ${config.line.channelAccessToken ? 'พร้อม' : 'ยังไม่ตั้งค่า'} · LIFF ${config.line.liffId ? 'พร้อม' : 'ยังไม่ตั้งค่า'}\n`);

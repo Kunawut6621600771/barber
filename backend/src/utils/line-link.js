@@ -100,17 +100,20 @@ export async function redeemLinkCode(code, profile) {
   );
   if (other.length) return { ok: false, reason: 'line_taken' };
 
+  // จองรหัสแบบ atomic ก่อน กันสองบัญชี LINE ใช้รหัสเดียวกันพร้อมกัน
+  const { rowCount: claimed } = await query(
+    `UPDATE line_link_tokens SET used_at = NOW(), used_by = $2
+      WHERE code = $1 AND used_at IS NULL AND expires_at > NOW()`,
+    [token.code, profile.userId],
+  );
+  if (!claimed) return { ok: false, reason: 'used' };
+
   const { rows: updated } = await query(
     `UPDATE users
         SET line_user_id = $2, line_display_name = $3, line_picture_url = $4, line_linked_at = NOW()
       WHERE id = $1
       RETURNING id, full_name, line_display_name`,
     [token.user_id, profile.userId, profile.displayName || null, profile.pictureUrl || null],
-  );
-
-  await query(
-    'UPDATE line_link_tokens SET used_at = NOW(), used_by = $2 WHERE code = $1',
-    [token.code, profile.userId],
   );
 
   return { ok: true, user: updated[0], ticketId: token.ticket_id };

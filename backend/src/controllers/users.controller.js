@@ -9,12 +9,13 @@ import { validate } from '../utils/validate.js';
 
 const USER_FIELDS = `u.id, u.full_name, u.email, u.phone, u.role, u.status,
                      u.avatar_url, u.birth_date, u.note, u.last_login_at, u.created_at,
-                     u.loyalty_points, u.member_tier, u.total_spent, u.visit_count`;
+                     u.loyalty_points, u.member_tier, u.total_spent, u.visit_count,
+                     u.line_display_name, u.line_picture_url, (u.line_user_id IS NOT NULL) AS line_linked`;
 
 /** GET /api/users?role=&search=&status=&page=&limit= */
 export const listUsers = asyncHandler(async (req, res) => {
   const page = Math.max(Number(req.query.page) || 1, 1);
-  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 500);
   const params = [];
   const where = [];
 
@@ -27,8 +28,9 @@ export const listUsers = asyncHandler(async (req, res) => {
     where.push(`u.status = $${params.length}`);
   }
   if (req.query.search) {
-    params.push(`%${req.query.search.trim()}%`);
-    where.push(`(u.full_name ILIKE $${params.length} OR u.email ILIKE $${params.length} OR u.phone ILIKE $${params.length})`);
+    params.push(`%${String(req.query.search).trim()}%`);
+    where.push(`(u.full_name ILIKE $${params.length} OR u.email ILIKE $${params.length} OR u.phone ILIKE $${params.length}
+                 OR u.line_display_name ILIKE $${params.length})`);
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -93,7 +95,11 @@ export const createUser = asyncHandler(async (req, res) => {
     specialty: { type: 'string', max: 150, label: 'ความถนัด' },
   });
 
-  const password = req.body.password;
+  if (data.role === 'admin' && req.user.role !== 'admin') {
+    throw ApiError.forbidden('เฉพาะผู้ดูแลระบบเท่านั้นที่สร้างบัญชีผู้ดูแลระบบได้');
+  }
+
+  const password = req.body.password == null ? '' : String(req.body.password);
   const hash = password ? await bcrypt.hash(password, 10) : null; // ไม่ใส่รหัส = ให้ผู้ใช้ Create Password เอง
 
   const user = await withTransaction(async (client) => {
@@ -136,6 +142,18 @@ export const updateUser = asyncHandler(async (req, res) => {
   });
 
   const targetId = Number(req.params.id);
+  if (!Number.isInteger(targetId) || targetId <= 0) throw ApiError.notFound('ไม่พบผู้ใช้นี้');
+
+  // พนักงานแก้ได้เฉพาะบัญชีที่ไม่ใช่แอดมิน และตั้งใครเป็นแอดมินไม่ได้ (กันยกระดับสิทธิ์ตัวเอง)
+  if (req.user.role !== 'admin') {
+    if (data.role === 'admin') throw ApiError.forbidden('เฉพาะผู้ดูแลระบบเท่านั้นที่กำหนดสิทธิ์ผู้ดูแลระบบได้');
+    const { rows: t } = await query('SELECT role FROM users WHERE id = $1', [targetId]);
+    if (t[0]?.role === 'admin') throw ApiError.forbidden('เฉพาะผู้ดูแลระบบเท่านั้นที่แก้ไขบัญชีผู้ดูแลระบบได้');
+    if (targetId === req.user.id && data.role && data.role !== req.user.role) {
+      throw ApiError.forbidden('ไม่สามารถเปลี่ยนสิทธิ์ของตนเองได้');
+    }
+  }
+
   // กันไม่ให้ผู้ดูแลคนสุดท้ายลดสิทธิ์/ปิดบัญชีตัวเองจนไม่มีใครเข้าระบบได้
   if (targetId === req.user.id && (data.role && data.role !== 'admin' || data.status && data.status !== 'active')) {
     throw ApiError.badRequest('ไม่สามารถลดสิทธิ์หรือระงับบัญชีของตนเองได้');

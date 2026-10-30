@@ -5,6 +5,7 @@ import { query } from '../db.js';
 import { ApiError, asyncHandler } from '../utils/http.js';
 import { validate } from '../utils/validate.js';
 import { broadcast } from '../utils/realtime.js';
+import { maskName } from '../utils/mask.js';
 
 /** GET /api/barbers */
 export const listBarbers = asyncHandler(async (req, res) => {
@@ -23,7 +24,14 @@ export const listBarbers = asyncHandler(async (req, res) => {
       ORDER BY b.code`,
     [req.query.status || null],
   );
-  res.json({ data: rows });
+
+  // ลูกค้าไม่ต้องเห็นอีเมล/เบอร์ของช่าง และชื่อลูกค้าคนอื่นที่กำลังนั่งตัดอยู่
+  const isStaff = ['admin', 'staff', 'barber'].includes(req.user?.role);
+  const data = isStaff ? rows : rows.map(({ email: _e, phone: _p, ...b }) => ({
+    ...b,
+    current_ticket: b.current_ticket ? { ...b.current_ticket, customer_name: maskName(b.current_ticket.customer_name) } : null,
+  }));
+  res.json({ data });
 });
 
 /** PATCH /api/barbers/:id/status — เปลี่ยนสถานะช่าง (ว่าง/พัก/เลิกงาน) */

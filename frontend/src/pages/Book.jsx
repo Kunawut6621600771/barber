@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client.js';
+import { useRealtime } from '../api/realtime.js';
 import { useToast } from '../context/ToastContext.jsx';
 import { useAuth, isStaffRole } from '../context/AuthContext.jsx';
 import {
-  Card, ConfirmModal, Field, Empty, Loading, Alert, baht, dateOf,
+  Card, ConfirmModal, Field, Empty, Loading, Alert, ServiceThumb, Avatar,
+  SOURCE_LABEL, baht, dateOf, dateTimeOf,
 } from '../components/ui.jsx';
 
 const STATUS = {
@@ -16,6 +18,69 @@ const STATUS = {
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 const hhmm = (t) => String(t || '').slice(0, 5);
+
+/** การ์ดการจอง 1 รายการ แสดงรูปและชื่อบัญชี LINE ของผู้จอง (พนักงาน) */
+function BookingCard({ appt, onCheckin, onCancel }) {
+  const st = STATUS[appt.status] || { label: appt.status, cls: '' };
+  const isToday = appt.appoint_date === todayStr();
+  const lineName = appt.line_display_name;
+  const realName = appt.customer_name;
+
+  return (
+    <div className={`book-card ${isToday ? 'today' : ''}`}>
+      <div className="book-card-head">
+        {appt.line_picture_url
+          ? <img src={appt.line_picture_url} alt="" className="book-card-pic" referrerPolicy="no-referrer" />
+          : <Avatar name={lineName || realName} size="lg" />}
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div className="bold truncate">{lineName || realName || 'ลูกค้า'}</div>
+          {lineName && realName && realName !== lineName && (
+            <div className="tiny muted truncate">ชื่อในระบบ: {realName}</div>
+          )}
+          <div className="row gap-1 wrap" style={{ marginTop: 4 }}>
+            {appt.line_linked
+              ? <span className="badge line">LINE</span>
+              : <span className="badge">{SOURCE_LABEL[appt.source] || appt.source}</span>}
+            <span className={`badge ${st.cls}`}><i className="dot-i" />{st.label}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="book-card-when">
+        <div>
+          <div className="tiny muted">{isToday ? 'วันนี้' : dateOf(appt.appoint_date)}</div>
+          <div className="book-card-time">{hhmm(appt.appoint_time)} <small>น.</small></div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div className="tiny muted">ราคา</div>
+          <div className="bold">{baht(appt.price)}</div>
+        </div>
+      </div>
+
+      <div className="dl book-card-dl">
+        <dt>บริการ</dt><dd>{appt.service_name}</dd>
+        <dt>ใช้เวลา</dt><dd>{appt.duration_min} นาที</dd>
+        <dt>ช่าง</dt><dd>{appt.barber_name || 'ร้านจัดให้'}</dd>
+        <dt>เบอร์โทร</dt>
+        <dd>{appt.customer_phone ? <a href={`tel:${appt.customer_phone}`}>{appt.customer_phone}</a> : '—'}</dd>
+        {appt.note && <><dt>หมายเหตุ</dt><dd>{appt.note}</dd></>}
+        <dt>จองเมื่อ</dt><dd>{dateTimeOf(appt.created_at)}</dd>
+      </div>
+
+      <div className="book-card-foot">
+        <button
+          className="btn sm primary"
+          onClick={() => onCheckin(appt)}
+          disabled={!isToday}
+          title={isToday ? 'ออกบัตรคิว' : 'เช็กอินได้เฉพาะวันที่นัด'}
+        >
+          เช็กอิน
+        </button>
+        <button className="btn sm danger" onClick={() => onCancel(appt)}>ยกเลิก</button>
+      </div>
+    </div>
+  );
+}
 
 export default function Book() {
   const toast = useToast();
@@ -71,6 +136,18 @@ export default function Book() {
 
   useEffect(() => { loadBase(); loadMine(); loadStaffList(); }, [loadBase, loadMine, loadStaffList]);
 
+  // ลูกค้าจองหรือยกเลิกผ่าน LINE -> การ์ดของพนักงานอัปเดตทันที
+  useRealtime({ 'appointment:update': loadStaffList }, staff);
+
+  const [filter, setFilter] = useState('all'); // all | line | today
+  const shownStaffList = useMemo(() => staffList.filter((a) => {
+    if (filter === 'line') return a.line_linked;
+    if (filter === 'today') return a.appoint_date === todayStr();
+    return true;
+  }), [staffList, filter]);
+  const lineCount = staffList.filter((a) => a.line_linked).length;
+  const todayCount = staffList.filter((a) => a.appoint_date === todayStr()).length;
+
   const loadSlots = useCallback(async () => {
     setSlotLoading(true);
     setPicked(null);
@@ -93,9 +170,9 @@ export default function Book() {
 
   const maxDate = useMemo(() => {
     const d = new Date();
-    d.setDate(d.getDate() + 14);
+    d.setDate(d.getDate() + (Number(shop?.booking_max_days) || 14));
     return d.toLocaleDateString('en-CA');
-  }, []);
+  }, [shop]);
 
   const book = async () => {
     setBusy(true);
@@ -178,8 +255,11 @@ export default function Book() {
                   key={s.id}
                   className={`svc-card selectable ${String(s.id) === serviceId ? 'selected' : ''}`}
                   onClick={() => setServiceId(String(s.id))}
-                  style={{ textAlign: 'left', cursor: 'pointer' }}
+                  style={{ textAlign: 'left', cursor: 'pointer', padding: 0 }}
                 >
+                  <ServiceThumb service={s}>
+                    {s.category_name && <span className="svc-tag">{s.category_name}</span>}
+                  </ServiceThumb>
                   <div className="body">
                     <div className="bold">{s.name}</div>
                     <div className="small muted">{s.description || `ใช้เวลาประมาณ ${s.duration_min} นาที`}</div>
@@ -294,43 +374,31 @@ export default function Book() {
       </div>
 
       {staff && (
-        <Card title="การจองที่กำลังจะถึง (ทั้งร้าน)" subtitle="กด “เช็กอิน” เพื่อออกบัตรคิวให้ลูกค้าเมื่อมาถึง" className="mt-4" tight>
-          {staffList.length === 0 ? (
+        <Card
+          title="การจองที่กำลังจะถึง (ทั้งร้าน)"
+          subtitle="รายชื่อลูกค้าที่จองผ่าน LINE / ออนไลน์ · กด “เช็กอิน” เพื่อออกบัตรคิวเมื่อลูกค้ามาถึง"
+          className="mt-4"
+          action={(
+            <div className="chips">
+              <button className={`chip ${filter === 'all' ? 'active' : ''}`} onClick={() => setFilter('all')}>
+                ทั้งหมด ({staffList.length})
+              </button>
+              <button className={`chip ${filter === 'line' ? 'active' : ''}`} onClick={() => setFilter('line')}>
+                จองผ่าน LINE ({lineCount})
+              </button>
+              <button className={`chip ${filter === 'today' ? 'active' : ''}`} onClick={() => setFilter('today')}>
+                วันนี้ ({todayCount})
+              </button>
+            </div>
+          )}
+        >
+          {shownStaffList.length === 0 ? (
             <Empty icon="📅" title="ยังไม่มีการจองที่กำลังจะถึง" />
           ) : (
-            <div className="table-wrap">
-              <table className="data">
-                <thead>
-                  <tr><th>วันที่</th><th>เวลา</th><th>ลูกค้า</th><th>บริการ</th><th>ช่าง</th><th>สถานะ</th><th /></tr>
-                </thead>
-                <tbody>
-                  {staffList.map((a) => {
-                    const st = STATUS[a.status] || { label: a.status, cls: '' };
-                    const isToday = a.appoint_date === todayStr();
-                    return (
-                      <tr key={a.id}>
-                        <td className="tiny">{dateOf(a.appoint_date)}</td>
-                        <td className="bold mono">{hhmm(a.appoint_time)}</td>
-                        <td>
-                          {a.customer_name}
-                          {a.customer_phone && <div className="tiny muted">{a.customer_phone}</div>}
-                        </td>
-                        <td className="tiny">{a.service_name} · {baht(a.price)}</td>
-                        <td className="tiny">{a.barber_name || '—'}</td>
-                        <td><span className={`badge ${st.cls}`}><i className="dot-i" />{st.label}</span></td>
-                        <td>
-                          <div className="actions">
-                            <button className="btn sm primary" onClick={() => checkin(a)} disabled={!isToday} title={isToday ? 'ออกบัตรคิว' : 'เช็กอินได้เฉพาะวันที่นัด'}>
-                              เช็กอิน
-                            </button>
-                            <button className="btn sm danger" onClick={() => setCancelling(a)}>ยกเลิก</button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="book-card-grid">
+              {shownStaffList.map((a) => (
+                <BookingCard key={a.id} appt={a} onCheckin={checkin} onCancel={setCancelling} />
+              ))}
             </div>
           )}
         </Card>

@@ -1,0 +1,17 @@
+{
+  "name": "barbershop-queue",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ระบบเรียกคิวร้านตัดผม — สคริปต์สำหรับ deploy เป็น Node app เดียว (Hostinger)",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "postinstall": "npm --prefix backend ci --omit=dev",
+    "build": "npm --prefix frontend ci --include=dev && npm --prefix frontend run build",
+    "start": "node backend/src/server.js",
+    "db:setup": "npm --prefix backend run db:setup",
+    "db:migrate": "npm --prefix backend run db:migrate"
+  }
+}

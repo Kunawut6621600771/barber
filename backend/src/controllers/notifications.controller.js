@@ -11,7 +11,7 @@ import { addClient } from '../utils/realtime.js';
 
 /** GET /api/notifications?unread_only= */
 export const listNotifications = asyncHandler(async (req, res) => {
-  const limit = Math.min(Number(req.query.limit) || 30, 100);
+  const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 30, 1), 100);
   const params = [req.user.id, limit];
   const unreadSql = req.query.unread_only === 'true' ? 'AND n.is_read = FALSE' : '';
 

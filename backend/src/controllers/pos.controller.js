@@ -23,6 +23,8 @@ import { validate } from '../utils/validate.js';
 import { broadcast } from '../utils/realtime.js';
 import { getSettings, loyaltyConfig, num } from '../utils/settings.js';
 import { moveStock } from './products.controller.js';
+import { config } from '../config.js';
+import { pointsEarnedFor, discountAmount, maxRedeemablePoints, pointsToReverse } from '../utils/loyalty.js';
 
 const ACTIVE_STATUSES = ['paid', 'partial_refund', 'refunded'];
 const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -85,8 +87,11 @@ async function resolvePromo(client, code, subtotal) {
 
   if (!p) throw ApiError.notFound('ไม่พบโค้ดส่วนลดนี้');
   if (!p.is_active) throw ApiError.badRequest('โค้ดส่วนลดนี้ถูกปิดใช้งานแล้ว');
-  if (p.starts_at && new Date(p.starts_at) > new Date()) throw ApiError.badRequest('โค้ดส่วนลดนี้ยังไม่เริ่มใช้งาน');
-  if (p.ends_at && new Date(p.ends_at) < new Date()) throw ApiError.badRequest('โค้ดส่วนลดนี้หมดอายุแล้ว');
+  // เทียบเป็นวันที่ตามเขตเวลาร้าน: "ใช้ได้ถึง 31" = ใช้ได้ทั้งวันที่ 31
+  const today = shopToday();
+  const dayOf = (v) => new Intl.DateTimeFormat('en-CA', { timeZone: config.timezone }).format(new Date(v));
+  if (p.starts_at && dayOf(p.starts_at) > today) throw ApiError.badRequest('โค้ดส่วนลดนี้ยังไม่เริ่มใช้งาน');
+  if (p.ends_at && dayOf(p.ends_at) < today) throw ApiError.badRequest('โค้ดส่วนลดนี้หมดอายุแล้ว');
   if (p.max_uses !== null && p.used_count >= p.max_uses) throw ApiError.badRequest('โค้ดส่วนลดนี้ถูกใช้ครบจำนวนแล้ว');
   if (subtotal < p.min_total) {
     throw ApiError.badRequest(`โค้ดนี้ใช้ได้เมื่อยอดตั้งแต่ ${p.min_total.toLocaleString('th-TH')} บาทขึ้นไป`);
@@ -121,7 +126,7 @@ export const listSales = asyncHandler(async (req, res) => {
     where.push(`(bill_no ILIKE $${params.length} OR customer_name ILIKE $${params.length})`);
   }
 
-  const limit = Math.min(Number(req.query.limit) || 50, 200);
+  const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 50, 1), 200);
   const sql = `SELECT * FROM v_sale_detail
                 ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
                 ORDER BY created_at DESC LIMIT ${limit}`;
@@ -246,6 +251,12 @@ export const updateSale = asyncHandler(async (req, res) => {
     let discountValue = 'discount_value' in req.body ? (d.discount_value ?? 0) : current.discount_value;
     let promoCode = 'promo_code' in req.body ? (d.promo_code || null) : current.promo_code;
 
+    // ลบโค้ดออกโดยไม่ได้กรอกส่วนลดมือ -> ต้องล้างส่วนลดที่มาจากโค้ดเดิมด้วย
+    if (!promoCode && current.promo_code && !('discount_type' in req.body) && !('discount_value' in req.body)) {
+      discountType = null;
+      discountValue = 0;
+    }
+
     const { rows: sub } = await client.query(
       'SELECT COALESCE(SUM(line_total),0) AS subtotal FROM sale_items WHERE sale_id = $1', [current.id],
     );
@@ -283,6 +294,12 @@ export const updateSale = asyncHandler(async (req, res) => {
       }
       if (pointsUsed < loyalty.minRedeem) {
         throw ApiError.badRequest(`ต้องใช้อย่างน้อย ${loyalty.minRedeem} แต้มต่อครั้ง`);
+      }
+      // ใช้แต้มได้ไม่เกินยอดที่เหลือหลังหักส่วนลด (กันลูกค้าเสียแต้มเกินส่วนลดที่ได้)
+      const remaining = Math.max(subtotal - discountAmount(subtotal, discountType, discountValue), 0);
+      const maxPoints = maxRedeemablePoints(remaining, loyalty.pointValueBaht);
+      if (pointsUsed > maxPoints) {
+        throw ApiError.badRequest(`ยอดบิลนี้ใช้แต้มได้สูงสุด ${maxPoints} แต้ม`);
       }
       pointsDiscount = round2(pointsUsed * loyalty.pointValueBaht);
     } else {
@@ -471,6 +488,19 @@ export const checkout = asyncHandler(async (req, res) => {
     const { rows: fresh } = await client.query('SELECT * FROM sales WHERE id = $1', [current.id]);
     const sale = fresh[0];
 
+    // รายการอาจถูกลบหลังใส่แต้ม -> แต้มเกินยอดที่เหลือ ต้องให้แก้ก่อนปิดบิล
+    if (Number(sale.points_discount) > round2(Number(sale.subtotal) - Number(sale.discount_amount)) + 0.009) {
+      throw ApiError.badRequest('ส่วนลดจากแต้มเกินยอดบิล กรุณาปรับจำนวนแต้มที่ใช้ใหม่');
+    }
+
+    // ตรวจโค้ดส่วนลดซ้ำตอนปิดบิล (ล็อกแถวกันใช้เกินสิทธิ์จากหลายบิลพร้อมกัน)
+    if (sale.promo_code) {
+      const { rows: pr } = await client.query(
+        'SELECT id FROM promo_codes WHERE UPPER(code) = UPPER($1) FOR UPDATE', [sale.promo_code],
+      );
+      if (pr[0]) await resolvePromo(client, sale.promo_code, Number(sale.subtotal));
+    }
+
     const paidTotal = round2(parsed.reduce((sum, p) => sum + p.amount, 0));
     const total = Number(sale.total);
     if (paidTotal + 0.009 < total) {
@@ -525,7 +555,7 @@ export const checkout = asyncHandler(async (req, res) => {
       }
 
       if (loyalty.enabled && loyalty.pointsPerBaht > 0) {
-        pointsEarned = Math.floor(total * loyalty.pointsPerBaht);
+        pointsEarned = pointsEarnedFor(total, loyalty.pointsPerBaht);
         if (pointsEarned > 0) {
           const { rows: u } = await client.query(
             'UPDATE users SET loyalty_points = loyalty_points + $2 WHERE id = $1 RETURNING loyalty_points',
@@ -615,13 +645,17 @@ export const checkout = asyncHandler(async (req, res) => {
 /* ------------------------------------------------------------------ */
 
 export const voidSale = asyncHandler(async (req, res) => {
-  const reason = (req.body?.reason || '').trim() || null;
+  const reason = String(req.body?.reason ?? '').trim() || null;
 
   const sale = await withTransaction(async (client) => {
     const { rows } = await client.query('SELECT * FROM sales WHERE id = $1 FOR UPDATE', [req.params.id]);
     const current = rows[0];
     if (!current) throw ApiError.notFound('ไม่พบบิลนี้');
     if (current.status === 'void') throw ApiError.conflict('บิลนี้ถูกยกเลิกไปแล้ว');
+    // บิลที่คืนเงินไปแล้ว (บางส่วน/ทั้งหมด) ห้ามยกเลิก ไม่งั้นสต็อกและยอดเงินถูกคืนซ้ำ
+    if (['partial_refund', 'refunded'].includes(current.status)) {
+      throw ApiError.conflict('บิลนี้มีการคืนเงินแล้ว ยกเลิกบิลไม่ได้ ให้ใช้การคืนเงินแทน');
+    }
 
     // บิลที่จ่ายแล้ว ต้องเป็นแอดมินเท่านั้นจึงยกเลิกได้ (และต้องคืนของ/คืนแต้ม)
     if (current.status !== 'open') {
@@ -645,14 +679,19 @@ export const voidSale = asyncHandler(async (req, res) => {
       if (current.customer_id) {
         const net = current.points_used - current.points_earned;   // คืนแต้มที่ใช้ หักแต้มที่ได้
         if (net !== 0) {
+          const { rows: before } = await client.query(
+            'SELECT loyalty_points FROM users WHERE id = $1 FOR UPDATE', [current.customer_id],
+          );
           const { rows: u } = await client.query(
             'UPDATE users SET loyalty_points = GREATEST(loyalty_points + $2, 0) WHERE id = $1 RETURNING loyalty_points',
             [current.customer_id, net],
           );
+          // บันทึกแต้มที่เปลี่ยนจริง (กรณีแต้มไม่พอหักจนติด 0) ให้ประวัติตรงกับยอดคงเหลือ
+          const applied = u[0].loyalty_points - before[0].loyalty_points;
           await client.query(
             `INSERT INTO loyalty_transactions (user_id, points, balance_after, reason, sale_id, note, actor_id)
              VALUES ($1,$2,$3,'refund',$4,$5,$6)`,
-            [current.customer_id, net, u[0].loyalty_points, current.id,
+            [current.customer_id, applied, u[0].loyalty_points, current.id,
               `ปรับแต้มจากการยกเลิกบิล ${current.bill_no}`, req.user.id],
           );
         }
@@ -705,9 +744,9 @@ export const refundSale = asyncHandler(async (req, res) => {
     }
 
     await client.query(
-      `INSERT INTO sale_refunds (sale_id, amount, method, reason, restock, actor_id)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
-      [current.id, d.amount, d.method, d.reason || null, d.restock, req.user.id],
+      `INSERT INTO sale_refunds (sale_id, amount, method, reason, restock, actor_id, shift_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [current.id, d.amount, d.method, d.reason || null, d.restock, req.user.id, await openShiftId(client)],
     );
 
     // คืนเงินเต็มจำนวน -> คืนของเข้าสต็อกให้ด้วย (ถ้าเลือกไว้)
@@ -727,6 +766,38 @@ export const refundSale = asyncHandler(async (req, res) => {
           note: `คืนสินค้าจากบิล ${current.bill_no}`,
           actorId: req.user.id,
         });
+      }
+    }
+
+    // หักแต้มที่ได้และยอดใช้จ่ายสะสมตามสัดส่วนเงินที่คืน (คืนเต็ม = หักแต้มที่ได้ทั้งหมด)
+    if (current.customer_id && Number(current.total) > 0) {
+      const take = pointsToReverse({
+        earned: Number(current.points_earned) || 0,
+        total: Number(current.total),
+        refundedBefore: Number(current.refunded_amount),
+        refundedAfter: refunded,
+        isFull,
+      });
+
+      const { rows: before } = await client.query(
+        'SELECT loyalty_points FROM users WHERE id = $1 FOR UPDATE', [current.customer_id],
+      );
+      const { rows: u } = await client.query(
+        `UPDATE users
+            SET loyalty_points = GREATEST(loyalty_points - $2, 0),
+                total_spent    = GREATEST(total_spent - $3, 0),
+                member_tier    = member_tier_for(GREATEST(total_spent - $3, 0))
+          WHERE id = $1 RETURNING loyalty_points`,
+        [current.customer_id, take, d.amount],
+      );
+      const applied = u[0].loyalty_points - before[0].loyalty_points;
+      if (applied !== 0) {
+        await client.query(
+          `INSERT INTO loyalty_transactions (user_id, points, balance_after, reason, sale_id, note, actor_id)
+           VALUES ($1,$2,$3,'refund',$4,$5,$6)`,
+          [current.customer_id, applied, u[0].loyalty_points, current.id,
+            `หักแต้มจากการคืนเงินบิล ${current.bill_no}`, req.user.id],
+        );
       }
     }
 
@@ -819,6 +890,8 @@ export const createPromo = asyncHandler(async (req, res) => {
 
 export const updatePromo = asyncHandler(async (req, res) => {
   const d = validate(req.body, promoSchema);
+  if (d.discount_value <= 0) throw ApiError.badRequest('มูลค่าส่วนลดต้องมากกว่า 0');
+  if (d.discount_type === 'percent' && d.discount_value > 100) throw ApiError.badRequest('ส่วนลดเป็นเปอร์เซ็นต์ต้องไม่เกิน 100');
 
   const { rows } = await query(
     `UPDATE promo_codes

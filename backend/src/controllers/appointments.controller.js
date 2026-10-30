@@ -16,6 +16,13 @@ import { ApiError, asyncHandler } from '../utils/http.js';
 import { validate } from '../utils/validate.js';
 import { getSettings, num, bool } from '../utils/settings.js';
 import { issueTicket, ticketResponse } from './queue.controller.js';
+import { broadcast } from '../utils/realtime.js';
+import { config } from '../config.js';
+
+/** เวลาปัจจุบัน HH:MM ตามเขตเวลาของร้าน */
+const nowHHMM = () => new Intl.DateTimeFormat('en-GB', {
+  timeZone: config.timezone, hour: '2-digit', minute: '2-digit', hour12: false,
+}).format(new Date());
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -23,6 +30,8 @@ const detailSql = `
   SELECT a.*,
          COALESCE(u.full_name, a.guest_name)  AS customer_name,
          COALESCE(u.phone,     a.guest_phone) AS customer_phone,
+         u.line_display_name, u.line_picture_url,
+         (u.line_user_id IS NOT NULL) AS line_linked,
          s.name  AS service_name, s.price, s.duration_min,
          bu.full_name AS barber_name, b.code AS barber_code,
          q.ticket_no
@@ -66,28 +75,32 @@ export const availableSlots = asyncHandler(async (req, res) => {
   );
   const capacity = Math.max(barberRows[0].n, 1);
 
-  const params = [date];
-  let barberSql = '';
+  let barberId = null;
   if (req.query.barber_id) {
-    params.push(req.query.barber_id);
-    barberSql = `AND barber_id = $${params.length}`;
+    barberId = Number(req.query.barber_id);
+    if (!Number.isInteger(barberId) || barberId <= 0) throw ApiError.badRequest('รหัสช่างไม่ถูกต้อง');
   }
 
+  // นับทั้งร้าน (เพดาน = จำนวนช่าง) และนับของช่างที่เลือก (เพดาน = 1) ใช้กติกาเดียวกับตอนจองจริง
   const { rows: booked } = await query(
-    `SELECT TO_CHAR(appoint_time, 'HH24:MI') AS t, COUNT(*)::int AS n
+    `SELECT TO_CHAR(appoint_time, 'HH24:MI') AS t, COUNT(*)::int AS n,
+            COUNT(*) FILTER (WHERE barber_id = $2)::int AS mine
        FROM appointments
-      WHERE appoint_date = $1 AND status IN ('pending','confirmed') ${barberSql}
+      WHERE appoint_date = $1 AND status IN ('pending','confirmed')
       GROUP BY 1`,
-    params,
+    [date, barberId],
   );
-  const taken = Object.fromEntries(booked.map((r) => [r.t, r.n]));
+  const taken = Object.fromEntries(booked.map((r) => [r.t, r]));
 
   // วันนี้ไม่ให้จองย้อนเวลา
-  const nowHHMM = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(new Date());
+  const now = nowHHMM();
   const isToday = date === shopToday();
-  const perSlot = req.query.barber_id ? 1 : capacity;
+  const perSlot = barberId ? 1 : capacity;
+  const isFull = (t) => {
+    const r = taken[t];
+    if (!r) return false;
+    return r.n >= capacity || (barberId ? r.mine >= 1 : false);
+  };
 
   res.json({
     date,
@@ -95,8 +108,8 @@ export const availableSlots = asyncHandler(async (req, res) => {
     capacity: perSlot,
     slots: all.map((time) => ({
       time,
-      booked: taken[time] || 0,
-      available: (taken[time] || 0) < perSlot && !(isToday && time <= nowHHMM),
+      booked: barberId ? (taken[time]?.mine || 0) : (taken[time]?.n || 0),
+      available: !isFull(time) && !(isToday && time <= now),
     })),
   });
 });
@@ -119,6 +132,10 @@ export const listAppointments = asyncHandler(async (req, res) => {
   if (req.query.status) {
     params.push(String(req.query.status).split(','));
     where.push(`a.status = ANY($${params.length}::appointment_status[])`);
+  }
+  if (req.query.source) {
+    params.push(String(req.query.source).split(','));
+    where.push(`a.source = ANY($${params.length}::queue_source[])`);
   }
 
   const { rows } = await query(
@@ -153,6 +170,9 @@ export const createAppointment = asyncHandler(async (req, res) => {
   if (new Date(`${d.appoint_date}T00:00:00`) > limitDate) {
     throw ApiError.badRequest(`จองล่วงหน้าได้ไม่เกิน ${maxDays} วัน`);
   }
+  if (d.appoint_date === shopToday() && d.appoint_time <= nowHHMM()) {
+    throw ApiError.badRequest('เวลานี้ผ่านไปแล้ว กรุณาเลือกเวลาถัดไป');
+  }
   if (d.appoint_time < s.open_time || d.appoint_time >= s.close_time) {
     throw ApiError.badRequest(`ร้านเปิด ${s.open_time} - ${s.close_time} น. เท่านั้น`);
   }
@@ -172,19 +192,20 @@ export const createAppointment = asyncHandler(async (req, res) => {
     if (!svc[0]) throw ApiError.badRequest('ไม่พบบริการนี้ หรือบริการถูกปิดอยู่');
 
     const { rows: cap } = await client.query(`SELECT COUNT(*)::int AS n FROM barbers WHERE status <> 'off'`);
-    const capacity = d.barber_id ? 1 : Math.max(cap[0].n, 1);
+    const capacity = Math.max(cap[0].n, 1);
 
-    const params = [d.appoint_date, d.appoint_time];
-    let barberSql = '';
-    if (d.barber_id) { params.push(d.barber_id); barberSql = `AND barber_id = $${params.length}`; }
-
+    // เต็มเมื่อทั้งร้านครบจำนวนช่าง หรือช่างที่เลือกมีคนจองช่วงนี้แล้ว
     const { rows: taken } = await client.query(
-      `SELECT COUNT(*)::int AS n FROM appointments
+      `SELECT COUNT(*)::int AS n,
+              COUNT(*) FILTER (WHERE barber_id = $3)::int AS mine
+         FROM appointments
         WHERE appoint_date = $1 AND appoint_time = $2::time
-          AND status IN ('pending','confirmed') ${barberSql}`,
-      params,
+          AND status IN ('pending','confirmed')`,
+      [d.appoint_date, d.appoint_time, d.barber_id ?? null],
     );
-    if (taken[0].n >= capacity) throw ApiError.conflict('ช่วงเวลานี้ถูกจองเต็มแล้ว กรุณาเลือกเวลาอื่น');
+    if (taken[0].n >= capacity || (d.barber_id && taken[0].mine >= 1)) {
+      throw ApiError.conflict('ช่วงเวลานี้ถูกจองเต็มแล้ว กรุณาเลือกเวลาอื่น');
+    }
 
     const { rows } = await client.query(
       `INSERT INTO appointments (customer_id, guest_name, guest_phone, service_id, barber_id,
@@ -201,6 +222,7 @@ export const createAppointment = asyncHandler(async (req, res) => {
     return full[0];
   });
 
+  broadcast('appointment:update', { id: appointment.id, status: appointment.status });
   res.status(201).json({
     appointment,
     message: `จองคิววันที่ ${appointment.appoint_date} เวลา ${String(appointment.appoint_time).slice(0, 5)} น. เรียบร้อยแล้ว`,
@@ -216,7 +238,13 @@ export const cancelAppointment = asyncHandler(async (req, res) => {
   if (!isStaff && appt.customer_id !== req.user.id) throw ApiError.forbidden('ยกเลิกได้เฉพาะการจองของตนเอง');
   if (!['pending', 'confirmed'].includes(appt.status)) throw ApiError.conflict('การจองนี้ยกเลิกไม่ได้แล้ว');
 
-  await query(`UPDATE appointments SET status = 'cancelled' WHERE id = $1`, [req.params.id]);
+  // อัปเดตแบบมีเงื่อนไข กันชนกับการเช็กอินที่เกิดพร้อมกัน
+  const { rowCount } = await query(
+    `UPDATE appointments SET status = 'cancelled' WHERE id = $1 AND status IN ('pending','confirmed')`,
+    [appt.id],
+  );
+  if (!rowCount) throw ApiError.conflict('การจองนี้ยกเลิกไม่ได้แล้ว');
+  broadcast('appointment:update', { id: appt.id, status: 'cancelled' });
   res.json({ message: 'ยกเลิกการจองเรียบร้อยแล้ว' });
 });
 
@@ -252,6 +280,7 @@ export const checkinAppointment = asyncHandler(async (req, res) => {
     return issued;
   });
 
+  broadcast('appointment:update', { id: Number(req.params.id), status: 'done' });
   res.status(201).json({
     ...(await ticketResponse(result)),
     message: `ออกบัตรคิว ${result.ticket.ticket_no} จากการจองล่วงหน้าแล้ว`,

@@ -18,8 +18,9 @@ import { ApiError, asyncHandler } from '../utils/http.js';
 import { validate } from '../utils/validate.js';
 import { broadcast } from '../utils/realtime.js';
 import { promptpayPayload, maskPromptpay } from '../utils/promptpay.js';
-import { verifySlip, SlipError, slipProviderName } from '../utils/slip.js';
-import { lineEnabled, pushMessage, queueCard } from '../utils/line.js';
+import { verifySlip, SlipError, slipProviderName, decodeSlipImage } from '../utils/slip.js';
+import { lineEnabled, pushMessage } from '../utils/line.js';
+import { queueCard, paymentCard } from '../utils/line-flex.js';
 import { issueTicket, ticketResponse } from './queue.controller.js';
 
 const MAX_VERIFY_ATTEMPTS = 10;
@@ -43,6 +44,17 @@ const PAYMENT_SELECT = `
     LEFT JOIN barbers b ON b.id = p.barber_id
     LEFT JOIN users bu  ON bu.id = b.user_id
     LEFT JOIN queue_tickets q ON q.id = p.ticket_id`;
+
+/** เก็บรูปสลิปทุกครั้งที่ลูกค้าส่ง — เก็บไม่สำเร็จไม่ทำให้การชำระเงินล้ม */
+async function saveSlip(paymentId, image, { ok, reason = null, userId = null }) {
+  const img = decodeSlipImage(image);
+  if (!img) return;
+  await query(
+    `INSERT INTO payment_slips (payment_id, mime, image, ok, reason, uploaded_by)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [paymentId, img.mime, img.buf, ok, reason, userId],
+  ).catch((err) => console.error('[payment_slips] save failed:', err.message));
+}
 
 async function loadPayment(db, id, lock = false) {
   const { rows } = await db.query(
@@ -233,7 +245,7 @@ async function markPaidAndIssue(paymentId, fields, actorId) {
     if (u[0]?.line_user_id && lineEnabled()) {
       const t = issued?.ticket;
       onCommit(client, () => pushMessage(u[0].line_user_id, queueCard({
-        title: t ? 'ชำระเงินสำเร็จ ได้รับบัตรคิวแล้ว' : 'ชำระเงินสำเร็จ',
+        title: '✓ ชำระเงินแล้ว',
         message: t
           ? `รอโดยประมาณ ${t.estimated_wait_min ?? 0} นาที ระบบจะแจ้งเตือนทาง LINE เมื่อใกล้ถึงคิว`
           : 'ออกบัตรคิวอัตโนมัติไม่สำเร็จ กรุณาติดต่อพนักงานที่หน้าร้าน',
@@ -262,6 +274,11 @@ export const submitSlip = asyncHandler(async (req, res) => {
     throw ApiError.conflict('ตรวจสลิปเกินจำนวนครั้งที่กำหนด กรุณาติดต่อพนักงาน');
   }
 
+  // ต้องเป็นรูปจริง (JPEG/PNG/WEBP/GIF) ก่อนส่งไปตรวจ — พนักงานต้องเปิดดูสลิปนี้ย้อนหลังได้
+  if (req.body?.image && !decodeSlipImage(req.body.image)) {
+    throw new ApiError(422, 'ไฟล์ที่แนบไม่ใช่รูปภาพ กรุณาแนบรูปสลิป (JPG หรือ PNG)', { code: 'not_image' });
+  }
+
   await query('UPDATE payments SET verify_attempts = verify_attempts + 1 WHERE id = $1', [payment.id]);
 
   let slip;
@@ -274,6 +291,7 @@ export const submitSlip = asyncHandler(async (req, res) => {
   } catch (err) {
     if (err instanceof SlipError) {
       await query(`UPDATE payments SET fail_reason = $2 WHERE id = $1`, [payment.id, err.message]);
+      await saveSlip(payment.id, req.body?.image, { ok: false, reason: err.message, userId: req.user.id });
       throw new ApiError(422, err.message, { code: err.code, retryable: err.retryable });
     }
     throw err;
@@ -291,10 +309,12 @@ export const submitSlip = asyncHandler(async (req, res) => {
     }, payment.customer_id);
   } catch (err) {
     if (err.code === '23505' && err.constraint === 'uniq_payments_trans_ref') {
+      await saveSlip(payment.id, req.body?.image, { ok: false, reason: 'สลิปนี้ถูกใช้ชำระเงินไปแล้ว', userId: req.user.id });
       throw new ApiError(422, 'สลิปนี้ถูกใช้ชำระเงินไปแล้ว', { code: 'duplicate_slip' });
     }
     throw err;
   }
+  await saveSlip(payment.id, req.body?.image, { ok: true, userId: req.user.id });
 
   const fresh = await loadPayment({ query }, payment.id);
   if (!result.issued) {
@@ -336,6 +356,80 @@ export const listPayments = asyncHandler(async (req, res) => {
     needs_attention: data.filter((p) => p.status === 'paid' && !p.ticket_id).length,
   };
   res.json({ data, summary, date });
+});
+
+/**
+ * GET /api/payments/history?from=&to=&search=&status=&page=&limit=
+ * ประวัติการโอนของลูกค้าย้อนหลัง (ข้ามวันได้) พร้อมจำนวนสลิปที่แนบมา
+ */
+export const paymentHistory = asyncHandler(async (req, res) => {
+  const page = Math.max(Number(req.query.page) || 1, 1);
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+  const isDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const to = isDate(req.query.to) ? req.query.to : shopToday();
+  const from = isDate(req.query.from) ? req.query.from : to;
+
+  const params = [from, to, config.timezone];
+  const where = [`(p.created_at AT TIME ZONE $3)::date BETWEEN $1::date AND $2::date`];
+  if (req.query.status) {
+    params.push(String(req.query.status).split(','));
+    where.push(`p.status = ANY($${params.length}::payment_status[])`);
+  } else {
+    // รายการที่ลูกค้าเปลี่ยนใจยกเลิกเองโดยไม่เคยส่งสลิป ไม่ใช่ "การโอน" ไม่ต้องแสดง
+    where.push(`(p.status <> 'cancelled' OR EXISTS (SELECT 1 FROM payment_slips ps WHERE ps.payment_id = p.id))`);
+  }
+  if (req.query.search) {
+    params.push(`%${String(req.query.search).trim()}%`);
+    const n = params.length;
+    where.push(`(cu.full_name ILIKE $${n} OR cu.line_display_name ILIKE $${n}
+                 OR cu.phone ILIKE $${n} OR p.ref_code ILIKE $${n} OR p.slip_trans_ref ILIKE $${n})`);
+  }
+
+  params.push(limit, (page - 1) * limit);
+  const { rows } = await query(
+    `SELECT p.id, p.ref_code, p.status, p.method, p.amount, p.slip_amount, p.slip_trans_ref,
+            p.slip_paid_at, p.paid_at, p.created_at, p.fail_reason, p.ticket_id,
+            s.name AS service_name, q.ticket_no,
+            cu.id AS customer_id, cu.full_name AS customer_name, cu.phone AS customer_phone,
+            cu.line_display_name, cu.line_picture_url,
+            ab.full_name AS approved_by_name,
+            (SELECT COUNT(*)::int FROM payment_slips ps WHERE ps.payment_id = p.id) AS slip_count,
+            COUNT(*) OVER() AS total_count,
+            SUM(CASE WHEN p.status = 'paid' THEN p.amount ELSE 0 END) OVER() AS total_paid
+       FROM payments p
+       JOIN services s ON s.id = p.service_id
+       JOIN users cu   ON cu.id = p.customer_id
+       LEFT JOIN users ab ON ab.id = p.approved_by
+       LEFT JOIN queue_tickets q ON q.id = p.ticket_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY p.created_at DESC
+      LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params,
+  );
+
+  const total = Number(rows[0]?.total_count ?? 0);
+  res.json({
+    data: rows.map(({ total_count: _t, total_paid: _p, ...r }) => r),
+    summary: { total, paid_amount: Number(rows[0]?.total_paid ?? 0) },
+    pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    from, to,
+  });
+});
+
+/** GET /api/payments/:id/slips — รูปสลิปทุกใบของรายการนี้ (ใหม่สุดก่อน) */
+export const paymentSlips = asyncHandler(async (req, res) => {
+  const payment = await loadPayment({ query }, req.params.id);
+  if (!payment) throw ApiError.notFound('ไม่พบรายการชำระเงิน');
+  const { rows } = await query(
+    `SELECT ps.id, ps.mime, ps.image, ps.ok, ps.reason, ps.created_at, u.full_name AS uploaded_by_name
+       FROM payment_slips ps LEFT JOIN users u ON u.id = ps.uploaded_by
+      WHERE ps.payment_id = $1 ORDER BY ps.id DESC LIMIT 20`,
+    [payment.id],
+  );
+  res.json({
+    payment: publicPayment(payment),
+    slips: rows.map(({ image, mime, ...r }) => ({ ...r, image: `data:${mime};base64,${image.toString('base64')}` })),
+  });
 });
 
 /** POST /api/payments/:id/approve — พนักงานยืนยันการชำระเงินเอง { method: 'manual'|'cash', note } */

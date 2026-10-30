@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth, isStaffRole } from '../context/AuthContext.jsx';
+import { getLineConfig, looksLikeLineApp, safeTarget } from '../api/liff.js';
 import { Field, PasswordInput, Alert } from '../components/ui.jsx';
 import AuthVisual from '../components/AuthVisual.jsx';
 
@@ -15,6 +16,19 @@ export default function Login() {
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [busy, setBusy] = useState(false);
+
+  // เปิดจากแอป LINE (เช่น สแกน QR หน้าร้านด้วยกล้อง LINE) -> เข้าด้วยบัญชี LINE แทนการกรอกอีเมล
+  // ยกเว้นตอนที่หน้า LIFF ส่งมาให้ล็อกอินบัญชีเดิมเพื่อเชื่อม LINE (from ขึ้นต้นด้วย /liff)
+  useEffect(() => {
+    const from = location.state?.from;
+    if (!looksLikeLineApp() || from?.startsWith('/liff') || location.state?.emailOnly) return;
+    getLineConfig().then((cfg) => {
+      if (!cfg.liff_enabled) return;
+      const to = safeTarget(from);
+      navigate(`/liff${to ? `?to=${encodeURIComponent(to)}` : ''}`, { replace: true });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -38,7 +52,7 @@ export default function Login() {
 
   return (
     <div className="auth-wrap">
-      <AuthVisual />
+      <AuthVisual showQr />
 
       <div className="auth-form-side">
         <div className="auth-card">

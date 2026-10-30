@@ -33,7 +33,8 @@ export const config = {
     liffId: process.env.LIFF_ID || '',
     botBasicId: process.env.LINE_BOT_BASIC_ID || '',          // เช่น @123abcde ใช้ทำลิงก์เพิ่มเพื่อน
   },
-  db: {
+  // ฐานข้อมูลบนคลาวด์ (เช่น Neon) ให้ใส่ DATABASE_URL แทน PGHOST/PGUSER/...
+  db: process.env.DATABASE_URL ? { connectionString: process.env.DATABASE_URL } : {
     host: process.env.PGHOST || 'localhost',
     port: Number(process.env.PGPORT || 5440),
     user: process.env.PGUSER || 'postgres',

@@ -98,7 +98,7 @@ export const adjustPoints = asyncHandler(async (req, res) => {
 
 /** GET /api/loyalty — อันดับลูกค้าที่ใช้จ่ายสูงสุด (พนักงาน) */
 export const topCustomers = asyncHandler(async (req, res) => {
-  const limit = Math.min(Number(req.query.limit) || 20, 100);
+  const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 20, 1), 100);
   const { rows } = await query(
     `SELECT id, full_name, phone, email, member_tier, loyalty_points, total_spent,
             visit_count, last_visit_at

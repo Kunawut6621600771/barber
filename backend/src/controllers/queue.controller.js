@@ -10,8 +10,17 @@ import { ApiError, asyncHandler } from '../utils/http.js';
 import { validate } from '../utils/validate.js';
 import { broadcast } from '../utils/realtime.js';
 import { notifyTicket, notifyNearTurn } from '../utils/notify.js';
+import { maskName } from '../utils/mask.js';
+import { appUrl } from '../utils/line.js';
 
 const today = shopToday; // "วันนี้" ตามเขตเวลาของร้าน ตรงกับ CURRENT_DATE ของฐานข้อมูล
+
+/** ข้อมูลคิวที่เปิดเผยต่อสาธารณะได้ (จอหน้าร้าน / SSE ที่ไม่ต้องล็อกอิน) — ไม่มีเบอร์โทรและรหัสลูกค้า */
+export function publicTicket(t) {
+  if (!t) return t;
+  const { customer_phone: _p, customer_id: _c, ...rest } = t;
+  return { ...rest, customer_name: maskName(t.customer_name) };
+}
 
 const loadTicket = async (client, id) => {
   const { rows } = await client.query('SELECT * FROM v_queue_board WHERE id = $1', [id]);
@@ -29,7 +38,7 @@ async function refreshQueue(client, queueDate) {
       ORDER BY status, position NULLS FIRST, seq`,
     [queueDate],
   );
-  broadcast('queue:update', { queue_date: queueDate, tickets: rows });
+  broadcast('queue:update', { queue_date: queueDate, tickets: rows.map(publicTicket) });
   return rows;
 }
 
@@ -195,9 +204,9 @@ export const currentQueue = asyncHandler(async (_req, res) => {
 
   res.json({
     queue_date: queueDate,
-    now_serving: serving.rows,
-    called: called.rows,
-    waiting: waiting.rows,
+    now_serving: serving.rows.map(publicTicket),
+    called: called.rows.map(publicTicket),
+    waiting: waiting.rows.map(publicTicket),
     ...counts.rows[0],
   });
 });
@@ -253,7 +262,8 @@ export const trackTicket = asyncHandler(async (req, res) => {
 
 /** GET /api/queue/shop-qr — QR หน้าร้านสำหรับสแกนรับบัตรคิว (public) */
 export const shopQr = asyncHandler(async (_req, res) => {
-  const url = `${config.publicUrl}/app/take-queue?src=qr`;
+  // ตั้ง LIFF ไว้ -> สแกนแล้วเข้าด้วยบัญชี LINE อัตโนมัติ ร้านได้ชื่อ/รูป LINE ของลูกค้า
+  const url = appUrl('/app/take-queue?src=qr');
   res.json({ url, qr_code: await QRCode.toDataURL(url, { width: 400, margin: 1 }) });
 });
 
@@ -312,9 +322,13 @@ async function callTicketInTx(client, row, barberId, actorId) {
   await logEvent(client, row.id, 'call', row.status, 'called', actorId);
 
   const ticket = await loadTicket(client, row.id);
-  await notifyTicket(client, { type: 'your_turn', ticket });
+  // คิวที่เคยถูกเรียกแล้วโดนข้าม -> เรียกรอบใหม่ต้องแจ้งอีกครั้ง (your_turn ส่งได้ครั้งเดียวต่อคิว)
+  const { rows: sent } = await client.query(
+    `SELECT 1 FROM notifications WHERE ticket_id = $1 AND type = 'your_turn' LIMIT 1`, [row.id],
+  );
+  await notifyTicket(client, { type: sent.length ? 'called_again' : 'your_turn', ticket });
   await refreshQueue(client, ticket.queue_date);
-  broadcast('queue:called', ticket);
+  broadcast('queue:called', publicTicket(ticket));
   return ticket;
 }
 
@@ -333,7 +347,7 @@ export const recallTicket = asyncHandler(async (req, res) => {
 
     const t = await loadTicket(client, rows[0].id);
     await notifyTicket(client, { type: 'called_again', ticket: t });
-    broadcast('queue:called', t);
+    broadcast('queue:called', publicTicket(t));
     return t;
   });
 
@@ -366,7 +380,7 @@ export const skipTicket = asyncHandler(async (req, res) => {
     const ticket = await loadTicket(client, row.id);
     await notifyTicket(client, { type: 'skipped', ticket });
     await refreshQueue(client, ticket.queue_date);
-    broadcast('queue:skipped', ticket);
+    broadcast('queue:skipped', publicTicket(ticket));
 
     return {
       ticket: await loadTicket(client, row.id),
@@ -381,7 +395,7 @@ export const skipTicket = asyncHandler(async (req, res) => {
 
 /** POST /api/queue/:id/cancel — ยกเลิกคิว (ลูกค้ายกเลิกของตัวเองได้) */
 export const cancelTicket = asyncHandler(async (req, res) => {
-  const reason = (req.body?.reason || '').trim() || null;
+  const reason = String(req.body?.reason ?? '').trim() || null;
 
   const ticket = await withTransaction(async (client) => {
     const { rows } = await client.query(
@@ -405,7 +419,7 @@ export const cancelTicket = asyncHandler(async (req, res) => {
     const t = await loadTicket(client, row.id);
     await notifyTicket(client, { type: 'cancelled', ticket: t, reason });
     await refreshQueue(client, t.queue_date);
-    broadcast('queue:cancelled', t);
+    broadcast('queue:cancelled', publicTicket(t));
     return t;
   });
 

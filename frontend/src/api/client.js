@@ -52,6 +52,7 @@ async function request(path, { method = 'GET', body, params, raw = false, retry 
     }
     store.token = null;
     store.refresh = null;
+    window.dispatchEvent(new Event('auth:expired'));
   }
 
   if (raw) {

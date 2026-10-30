@@ -18,17 +18,20 @@ const withSeed = !process.argv.includes('--no-seed');
 
 async function run() {
   // 1) เชื่อมต่อ database 'postgres' เพื่อสร้างฐานข้อมูลของระบบ
-  const admin = new pg.Client({ ...config.db, database: 'postgres' });
-  await admin.connect();
+  //    ใช้ DATABASE_URL (เช่น Neon) ฐานข้อมูลถูกสร้างไว้แล้วจากหน้าเว็บผู้ให้บริการ ข้ามขั้นนี้
+  if (!config.db.connectionString) {
+    const admin = new pg.Client({ ...config.db, database: 'postgres' });
+    await admin.connect();
 
-  const { rows } = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [config.db.database]);
-  if (rows.length) {
-    console.log(`• พบฐานข้อมูล "${config.db.database}" อยู่แล้ว`);
-  } else {
-    await admin.query(`CREATE DATABASE "${config.db.database}" ENCODING 'UTF8'`);
-    console.log(`✓ สร้างฐานข้อมูล "${config.db.database}" แล้ว`);
+    const { rows } = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [config.db.database]);
+    if (rows.length) {
+      console.log(`• พบฐานข้อมูล "${config.db.database}" อยู่แล้ว`);
+    } else {
+      await admin.query(`CREATE DATABASE "${config.db.database}" ENCODING 'UTF8'`);
+      console.log(`✓ สร้างฐานข้อมูล "${config.db.database}" แล้ว`);
+    }
+    await admin.end();
   }
-  await admin.end();
 
   // 2) รัน schema + seed
   // ใช้ timezone เดียวกับที่แอปใช้ เพื่อให้ CURRENT_DATE ใน seed.sql ตรงกับ "วันนี้" ของระบบ

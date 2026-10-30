@@ -16,6 +16,13 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // session หมดอายุ (refresh ไม่ผ่าน) -> ให้กลับไปหน้าเข้าสู่ระบบ
+  useEffect(() => {
+    const onExpired = () => setUser(null);
+    window.addEventListener('auth:expired', onExpired);
+    return () => window.removeEventListener('auth:expired', onExpired);
+  }, []);
+
   // โหลดข้อมูลผู้ใช้จาก token ที่เก็บไว้ตอนเปิดแอป
   useEffect(() => {
     if (!api.tokens.token) { setLoading(false); return; }

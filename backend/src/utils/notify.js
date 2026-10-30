@@ -10,9 +10,10 @@
  */
 import { broadcast } from './realtime.js';
 import { onCommit } from '../db.js';
-import { lineEnabled, pushMessage, queueCard } from './line.js';
+import { lineEnabled, pushMessage } from './line.js';
+import { queueCard } from './line-flex.js';
 
-const LINE_TONE = { your_turn: 'danger', called_again: 'danger', cancelled: 'danger', skipped: 'danger', done: 'ok' };
+const LINE_TONE = { near_turn: 'warn', your_turn: 'ok', called_again: 'warn', cancelled: 'danger', skipped: 'danger', done: 'ok' };
 
 const TEMPLATES = {
   near_turn: (t) => ({

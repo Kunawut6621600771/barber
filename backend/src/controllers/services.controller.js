@@ -79,7 +79,7 @@ export const listServices = asyncHandler(async (req, res) => {
     where.push(`s.category_id = $${params.length}`);
   }
   if (req.query.search) {
-    params.push(`%${req.query.search.trim()}%`);
+    params.push(`%${String(req.query.search).trim()}%`);
     where.push(`s.name ILIKE $${params.length}`);
   }
   if (req.query.active_only === 'true') where.push('s.is_active = TRUE');

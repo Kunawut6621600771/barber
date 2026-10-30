@@ -1,8 +1,8 @@
 /**
  * สร้างเมนูด้านล่างห้องแชท (Rich menu) ของ LINE OA แล้วตั้งเป็นเมนูหลัก
- * เมนู 6 ปุ่ม (2 แถว x 3 คอลัมน์):
- *   รับบัตรคิว (เปิด LIFF) · คิวของฉัน · คิวตอนนี้
- *   จองล่วงหน้า · บริการ/ราคา · แต้มของฉัน
+ * เมนู 6 ช่อง ธีมดำ-เงินโครเมียม (ผังอยู่ใน scripts/richmenu-layout.js):
+ *   คิวของฉัน · รายการคิว · ติดต่อร้าน
+ *   จองคิวและบริการ (ช่องใหญ่ เปิด LIFF) · แต้มสะสม / สมัครสมาชิก (เปิด LIFF)
  *
  * สร้างรูปก่อนด้วย:  node scripts/line-richmenu-image.js
  *
@@ -14,6 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from '../src/config.js';
 import { appUrl } from '../src/utils/line.js';
+import { W, H, CELLS } from './richmenu-layout.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const token = config.line.channelAccessToken;
@@ -31,24 +32,17 @@ async function api(url, { method = 'POST', body, contentType = 'application/json
 
 async function run() {
   if (!token) throw new Error('ยังไม่ได้ตั้ง LINE_CHANNEL_ACCESS_TOKEN ใน backend/.env');
-  if (!config.line.liffId) console.warn('! ยังไม่ได้ตั้ง LIFF_ID ปุ่ม "รับบัตรคิว" จะเปิดเว็บปกติแทน');
+  if (!config.line.liffId) console.warn('! ยังไม่ได้ตั้ง LIFF_ID ปุ่ม "จองคิวและบริการ" จะเปิดเว็บปกติแทน');
 
-  const W = 2500; const H = 1686; const CW = Math.floor(W / 3); const CH = Math.floor(H / 2);
-  const cell = (i) => ({
-    x: (i % 3) * CW,
-    y: Math.floor(i / 3) * CH,
-    width: i % 3 === 2 ? W - CW * 2 : CW,
-    height: Math.floor(i / 3) === 1 ? H - CH : CH,
-  });
-
-  // ต้องเรียงให้ตรงกับรูปที่สร้างจาก scripts/line-richmenu-image.js
-  const actions = [
-    { type: 'uri', label: 'รับบัตรคิว', uri: appUrl('/app/take-queue') },
-    { type: 'message', label: 'คิวของฉัน', text: 'คิวของฉัน' },
-    { type: 'message', label: 'คิวตอนนี้', text: 'คิวตอนนี้' },
-    { type: 'message', label: 'จองล่วงหน้า', text: 'จองคิว' },
-    { type: 'message', label: 'บริการ/ราคา', text: 'ราคา' },
-    { type: 'message', label: 'แต้มของฉัน', text: 'แต้มของฉัน' },
+  // ช่องเดียวกับที่ใช้วาดรูปใน scripts/line-richmenu-image.js
+  const areas = [
+    { bounds: CELLS.myQueue, action: { type: 'message', label: 'คิวของฉัน', text: 'คิวของฉัน' } },
+    { bounds: CELLS.shopQueue, action: { type: 'message', label: 'รายการคิว', text: 'คิวตอนนี้' } },
+    { bounds: CELLS.contact, action: { type: 'message', label: 'ติดต่อร้าน', text: 'ติดต่อร้าน' } },
+    { bounds: CELLS.book, action: { type: 'uri', label: 'จองคิวและบริการ', uri: appUrl('/app/take-queue') } },
+    { bounds: CELLS.points, action: { type: 'message', label: 'แต้มสะสม', text: 'แต้มของฉัน' } },
+    // ผ่าน LIFF: ลูกค้าใหม่จะได้ปุ่ม "เริ่มใช้งานด้วยบัญชี LINE" (สร้างบัญชีสมาชิก) แล้วไปกรอกเบอร์/วันเกิดต่อ
+    { bounds: CELLS.register, action: { type: 'uri', label: 'สมัครสมาชิก', uri: appUrl('/app/profile') } },
   ];
 
   const menu = {
@@ -56,7 +50,7 @@ async function run() {
     selected: true,
     name: 'Trim & Co. main menu',
     chatBarText: 'เมนูร้าน',
-    areas: actions.map((action, i) => ({ bounds: cell(i), action })),
+    areas,
   };
 
   // ลบเมนูเก่าที่สคริปต์นี้เคยสร้างไว้

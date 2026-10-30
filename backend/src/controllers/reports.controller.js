@@ -3,12 +3,31 @@
  *  รายงานจำนวนลูกค้า / รายงานเวลารอเฉลี่ย / รายงานการให้บริการของช่าง
  */
 import { query, shopToday, shopDaysAgo } from '../db.js';
-import { asyncHandler } from '../utils/http.js';
+import { ApiError, asyncHandler } from '../utils/http.js';
+
+/** รับเฉพาะวันที่รูปแบบ YYYY-MM-DD ที่มีอยู่จริง (กัน 500 และกันค่าแปลก ๆ ไปอยู่ในชื่อไฟล์) */
+export function dateParam(v, fallback) {
+  if (v === undefined || v === '') return fallback;
+  const s = String(v);
+  const d = new Date(`${s}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s) {
+    throw ApiError.badRequest('รูปแบบวันที่ไม่ถูกต้อง (YYYY-MM-DD)');
+  }
+  return s;
+}
+
+/** ค่าในเซลล์ CSV: ใส่ ' นำหน้าค่าที่ขึ้นต้นด้วย = + - @ กัน Excel รันเป็นสูตร */
+export function csvCell(v) {
+  if (v === null || v === undefined) return '';
+  let s = String(v);
+  if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = `'${s}`;
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
 
 /** ช่วงวันที่ default = 30 วันล่าสุด */
 function range(req) {
-  const to = req.query.to || shopToday();
-  const from = req.query.from || shopDaysAgo(29);
+  const to = dateParam(req.query.to, shopToday());
+  const from = dateParam(req.query.from, shopDaysAgo(29));
   return [from, to];
 }
 
@@ -201,11 +220,7 @@ export const exportCsv = asyncHandler(async (req, res) => {
   const spec = QUERIES[type] || QUERIES.customers;
   const { rows, fields } = await query(spec.sql, [from, to]);
 
-  const escape = (v) => {
-    if (v === null || v === undefined) return '';
-    const s = String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
+  const escape = csvCell;
   const header = fields.map((f) => f.name);
   const csv = [header.join(','), ...rows.map((r) => header.map((h) => escape(r[h])).join(','))].join('\r\n');
 
@@ -219,8 +234,8 @@ export const exportCsv = asyncHandler(async (req, res) => {
 /* ===================================================================== */
 
 const rangeOf = (req, defaultDays = 30) => ({
-  from: req.query.from || shopDaysAgo(defaultDays - 1),
-  to: req.query.to || shopToday(),
+  from: dateParam(req.query.from, shopDaysAgo(defaultDays - 1)),
+  to: dateParam(req.query.to, shopToday()),
 });
 
 /** GET /api/reports/sales?from=&to= — สรุปยอดขายรวม + รายวัน + แยกวิธีจ่าย */
@@ -365,7 +380,7 @@ export const exportSalesCsv = asyncHandler(async (req, res) => {
     'เลขที่บิล', 'วันที่', 'เวลา', 'สถานะ', 'ลูกค้า', 'พนักงานขาย', 'ช่าง', 'จำนวนรายการ',
     'ยอดก่อนลด', 'ส่วนลด', 'ส่วนลดแต้ม', 'ภาษี', 'ยอดสุทธิ', 'คืนเงิน', 'แต้มที่ได้', 'โค้ด', 'หมายเหตุ',
   ];
-  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const esc = csvCell;
   const csv = [
     headers.join(','),
     ...rows.map((r) => Object.values(r).map(esc).join(',')),

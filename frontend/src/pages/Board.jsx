@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api/client.js';
 import { useRealtime } from '../api/realtime.js';
 import { timeOf } from '../components/ui.jsx';
+import ShopQr from '../components/ShopQr.jsx';
 
 /** จอแสดงคิวหน้าร้าน (สาธารณะ ไม่ต้องเข้าสู่ระบบ) */
 export default function Board() {
@@ -32,11 +33,8 @@ export default function Board() {
       <div className="row-between" style={{ marginBottom: 24 }}>
         <div className="row gap-3">
           <div className="sidebar-brand" style={{ border: 'none', padding: 0, margin: 0 }}>
-            <div className="mark">T</div>
-            <div>
-              <div className="name" style={{ fontSize: 18 }}>Trim &amp; Co.</div>
-              <div className="sub">ระบบเรียกคิวร้านตัดผม</div>
-            </div>
+            <img src="/logo.png" alt="ร้านตัดผมโครตซิ่ง" className="brand-logo" style={{ height: 84 }} />
+            <div className="sub" style={{ fontSize: 13 }}>ระบบเรียกคิวร้านตัดผม</div>
           </div>
         </div>
         <div className="right">
@@ -105,9 +103,9 @@ export default function Board() {
         </div>
       </div>
 
-      <p className="small center mt-5" style={{ color: 'var(--ink-500)' }}>
-        สแกน QR Code หน้าร้านเพื่อรับบัตรคิวและติดตามสถานะคิวของคุณบนมือถือ
-      </p>
+      <div className="board-qr mt-5">
+        <ShopQr size={170} />
+      </div>
     </div>
   );
 }

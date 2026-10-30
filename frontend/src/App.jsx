@@ -17,12 +17,8 @@ import TakeQueue from './pages/TakeQueue.jsx';
 import Profile from './pages/Profile.jsx';
 import Board from './pages/Board.jsx';
 import TrackTicket from './pages/TrackTicket.jsx';
-import Payments from './pages/Payments.jsx';
 import Liff from './pages/Liff.jsx';
-import Pos from './pages/Pos.jsx';
-import Products from './pages/Products.jsx';
-import Sales from './pages/Sales.jsx';
-import Shifts from './pages/Shifts.jsx';
+import Transfers from './pages/Transfers.jsx';
 import Members from './pages/Members.jsx';
 import SettingsPage from './pages/Settings.jsx';
 import Book from './pages/Book.jsx';
@@ -44,7 +40,7 @@ function Protected({ roles, children }) {
   const location = useLocation();
 
   if (loading) return <FullPageLoader />;
-  if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  if (!user) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
   if (roles && !roles.includes(user.role)) return <Navigate to="/app" replace />;
   return children;
 }
@@ -90,18 +86,10 @@ export default function App() {
                 <Protected roles={['admin', 'staff', 'barber']}><QueueManage /></Protected>} />
               <Route path="users" element={
                 <Protected roles={['admin', 'staff']}><Users /></Protected>} />
-              <Route path="payments" element={
-                <Protected roles={['admin', 'staff', 'barber']}><Payments /></Protected>} />
               <Route path="reports" element={
                 <Protected roles={['admin', 'staff', 'barber']}><Reports /></Protected>} />
-              <Route path="pos" element={
-                <Protected roles={['admin', 'staff', 'barber']}><Pos /></Protected>} />
-              <Route path="sales" element={
-                <Protected roles={['admin', 'staff', 'barber']}><Sales /></Protected>} />
-              <Route path="products" element={
-                <Protected roles={['admin', 'staff', 'barber']}><Products /></Protected>} />
-              <Route path="shifts" element={
-                <Protected roles={['admin', 'staff', 'barber']}><Shifts /></Protected>} />
+              <Route path="transfers" element={
+                <Protected roles={['admin', 'staff']}><Transfers /></Protected>} />
               <Route path="members" element={
                 <Protected roles={['admin', 'staff', 'barber']}><Members /></Protected>} />
               <Route path="settings" element={

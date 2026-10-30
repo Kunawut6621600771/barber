@@ -82,7 +82,7 @@ export default function Dashboard() {
       <div className="grid grid-4">
         <Stat label="คิวทั้งหมดวันนี้" value={s.total_tickets} unit="คิว" icon="🎫" />
         <Stat label="กำลังรอ" value={s.waiting_count} unit="คิว" icon="⏳"
-          tone={s.waiting_count > 8 ? 'var(--brand)' : undefined} />
+          tone={s.waiting_count > 8 ? 'var(--danger)' : undefined} />
         <Stat label="เสร็จสิ้นแล้ว" value={s.done_count} unit="คิว" icon="✓" />
         <Stat label="เวลารอเฉลี่ย" value={s.avg_wait_min ?? '—'} unit="นาที" icon="⌛" />
       </div>

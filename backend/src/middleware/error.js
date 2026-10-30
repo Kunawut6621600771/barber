@@ -23,6 +23,9 @@ export function errorHandler(err, _req, res, _next) {
     err = ApiError.conflict('ไม่สามารถดำเนินการได้ เนื่องจากมีข้อมูลอื่นอ้างอิงอยู่');
   } else if (err.code === '23514') {
     err = ApiError.badRequest('ข้อมูลไม่ผ่านเงื่อนไขของระบบ');
+  } else if (['22P02', '22007', '22008', '22003', '2201W', '2201X'].includes(err.code)) {
+    // รูปแบบข้อมูลผิด เช่น id ไม่ใช่ตัวเลข วันที่ผิด ตัวเลขเกินช่วง LIMIT ติดลบ
+    err = ApiError.badRequest('รูปแบบข้อมูลที่ส่งมาไม่ถูกต้อง');
   } else if (err.code === '3D000' || err.code === 'ECONNREFUSED') {
     err = new ApiError(503, 'เชื่อมต่อฐานข้อมูลไม่ได้ กรุณาตรวจสอบ PostgreSQL');
   }

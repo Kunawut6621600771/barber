@@ -9,6 +9,8 @@
     "start": "node src/server.js",
     "db:setup": "node scripts/setup-db.js",
     "db:migrate": "node scripts/db-migrate.js",
+    "test": "node --test \"tests/unit/*.test.js\"",
+    "test:e2e": "node --test --test-concurrency=1 \"tests/e2e/*.test.js\"",
     "line:richmenu": "node scripts/line-richmenu.js",
     "line:richmenu:image": "node scripts/line-richmenu-image.js"
   },

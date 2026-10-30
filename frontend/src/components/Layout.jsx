@@ -10,11 +10,7 @@ import { ThemeToggle } from '../context/ThemeContext.jsx';
 const STAFF_NAV = [
   { to: '/app/dashboard', th: 'ภาพรวม', icon: '▦' },
   { to: '/app/queue', th: 'คิว', icon: '≡', key: 'waiting' },
-  { to: '/app/pos', th: 'ขายหน้าร้าน (POS)', icon: '🛒', group: 'ขาย' },
-  { to: '/app/sales', th: 'ประวัติการขาย', icon: '🧾', group: 'ขาย' },
-  { to: '/app/products', th: 'สินค้าและสต็อก', icon: '📦', group: 'ขาย' },
-  { to: '/app/shifts', th: 'กะและเงินสด', icon: '💵', group: 'ขาย' },
-  { to: '/app/payments', th: 'ชำระผ่าน QR', icon: '฿', group: 'ขาย' },
+  { to: '/app/transfers', th: 'ประวัติการโอน', icon: '🧾', group: 'ขาย', roles: ['admin', 'staff'] },
   { to: '/app/book', th: 'จองล่วงหน้า', icon: '📅', group: 'ลูกค้า' },
   { to: '/app/members', th: 'สมาชิก / แต้ม', icon: '⭐', group: 'ลูกค้า' },
   { to: '/app/users', th: 'ผู้ใช้งาน', icon: '👥', group: 'ลูกค้า', roles: ['admin', 'staff'] },
@@ -78,7 +74,11 @@ export default function Layout() {
       setUnread((u) => u + 1);
       toast.info(`${n.title} — ${n.message}`);
     },
-    'queue:update': (d) => setWaitingCount(d.tickets.filter((t) => t.status === 'waiting').length),
+    'queue:update': (d) => {
+      if (!staff) return;
+      if (Array.isArray(d?.tickets)) setWaitingCount(d.tickets.filter((t) => t.status === 'waiting').length);
+      else loadWaiting();
+    },
   });
 
   const markAllRead = async () => {
@@ -95,12 +95,9 @@ export default function Layout() {
   return (
     <div className="app-shell">
       <aside className={`sidebar ${open ? 'open' : ''}`}>
-        <div className="sidebar-brand">
-          <div className="mark">{shopName.trim()[0] || 'T'}</div>
-          <div>
-            <div className="name">{shopName}</div>
-            <div className="sub">{staff ? 'Management Console' : 'ระบบเรียกคิว'}</div>
-          </div>
+        <div className="sidebar-brand logo-brand">
+          <img src="/logo.png" alt={shopName} className="brand-logo" />
+          <div className="sub">{staff ? 'Management Console' : 'ระบบเรียกคิว'}</div>
         </div>
 
         <nav className="col gap-1">

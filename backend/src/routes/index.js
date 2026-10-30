@@ -70,9 +70,11 @@ router.delete('/line/link', line.unlinkLine);
 router.get('/payments/config', payments.paymentConfig);
 router.get('/payments/current', payments.currentPayment);
 router.get('/payments', requireStaff, payments.listPayments);
+router.get('/payments/history', adminOrStaff, payments.paymentHistory);
 router.post('/payments', payments.createPayment);
 router.get('/payments/:id', payments.getPayment);
 router.post('/payments/:id/slip', payments.submitSlip);
+router.get('/payments/:id/slips', adminOrStaff, payments.paymentSlips);
 router.post('/payments/:id/cancel', payments.cancelPayment);
 router.post('/payments/:id/approve', adminOrStaff, payments.approvePayment);
 

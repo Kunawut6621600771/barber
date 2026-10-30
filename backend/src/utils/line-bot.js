@@ -5,12 +5,13 @@
  * แต้มสะสม การจอง วิธีชำระเงิน และคำถามที่พบบ่อย
  * เรื่องที่ตอบไม่ได้ จะบอกให้ลูกค้าโทรหาร้านหรือพิมพ์ "แอดมิน" ไว้ให้พนักงานตามอ่าน
  */
+import { config } from '../config.js';
 import { query, shopToday } from '../db.js';
 import { replyMessage, appUrl, getProfile } from './line.js';
 import { LINK_RE, redeemLinkCode } from './line-link.js';
 import { publicShopInfo, loyaltyConfig } from './settings.js';
 import {
-  card, serviceCarousel, shopInfoCard, pointsCard, barbersCard, promosCard, quickReply,
+  card, serviceCarousel, shopInfoCard, pointsCard, barbersCard, promosCard, paymentCard, quickReply,
 } from './line-flex.js';
 
 const baht = (n) => `฿${Number(n || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 })}`;
@@ -470,7 +471,20 @@ async function handleLinkCode(code, lineUserId) {
       ORDER BY seq LIMIT 1`,
     [result.user.id, shopToday()],
   );
-  const ticket = rows[0];
+  // รายการชำระเงินล่าสุดของวันนี้ — บอกลูกค้าเลยว่าจ่ายแล้วหรือยัง
+  const { rows: pay } = await query(
+    `SELECT p.*, s.name AS service_name, q.ticket_no
+       FROM payments p
+       JOIN services s ON s.id = p.service_id
+       LEFT JOIN queue_tickets q ON q.id = p.ticket_id
+      WHERE p.customer_id = $1 AND p.status <> 'cancelled'
+        AND (p.created_at AT TIME ZONE $2)::date = $3::date
+      ORDER BY p.created_at DESC LIMIT 1`,
+    [result.user.id, config.timezone, shopToday()],
+  );
+  const payment = pay[0];
+  // การ์ดชำระเงินแสดงหมายเลขคิวอยู่แล้ว ไม่ต้องแสดงซ้ำในการ์ดเชื่อมบัญชี
+  const ticket = payment ? null : rows[0];
 
   const success = card({
     shopName: shop.shop_name,
@@ -491,9 +505,12 @@ async function handleLinkCode(code, lineUserId) {
   });
 
   await logMessage({
-    lineUserId, userId: result.user.id, direction: 'out', intent: 'link_account', text: 'เชื่อมบัญชีสำเร็จ',
+    lineUserId, userId: result.user.id, direction: 'out', intent: 'link_account',
+    text: payment ? `เชื่อมบัญชีสำเร็จ | ${payment.status === 'paid' ? 'ชำระเงินแล้ว' : 'ยังไม่ได้ชำระเงิน'} ${payment.ref_code}` : 'เชื่อมบัญชีสำเร็จ',
   });
-  return [success, helpText(shop)];
+  return payment
+    ? [success, paymentCard(payment, shop.shop_name), helpText(shop)]
+    : [success, helpText(shop)];
 }
 
 /* ------------------------------------------------------------------ */

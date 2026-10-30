@@ -55,7 +55,14 @@ export function BarberBadge({ status }) {
   return <span className={`badge ${s.cls}`}><i className="dot-i" />{s.label}</span>;
 }
 
-export function Avatar({ name, size = '' }) {
+export function Avatar({ name, size = '', src }) {
+  const [broken, setBroken] = useState(false);
+  if (src && !broken) {
+    return (
+      <img className={`avatar ${size}`} src={src} alt="" referrerPolicy="no-referrer"
+        style={{ objectFit: 'cover' }} onError={() => setBroken(true)} />
+    );
+  }
   return <div className={`avatar ${size}`}>{initials(name)}</div>;
 }
 
@@ -182,6 +189,27 @@ export function Switch({ checked, onChange }) {
       <input type="checkbox" checked={!!checked} onChange={(e) => onChange(e.target.checked)} />
       <span className="slider" />
     </label>
+  );
+}
+
+/* ----------------------------- บริการ ------------------------------ */
+
+export const SERVICE_ICONS = {
+  'ตัดผม': '✂', 'สระผม': '🧴', 'โกนหนวด': '🪒', 'ทำสีผม': '🎨',
+  'ดัด/ยืดผม': '〰', 'ดูแลผิวหน้า': '✨', 'แพ็กเกจ': '🎁',
+};
+
+/** รูปบริการ — ถ้าไม่มีรูปหรือโหลดไม่ได้ จะแสดงไอคอนประเภทแทน */
+export function ServiceThumb({ service, children }) {
+  const [broken, setBroken] = useState(false);
+  const src = service.image_url;
+  return (
+    <div className="svc-thumb">
+      {src && !broken
+        ? <img src={src} alt={service.name} loading="lazy" onError={() => setBroken(true)} />
+        : (SERVICE_ICONS[service.category_name] || '✂')}
+      {children}
+    </div>
   );
 }
 

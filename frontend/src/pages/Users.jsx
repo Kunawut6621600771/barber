@@ -22,6 +22,9 @@ const STATUS_BADGE = {
   suspended: { label: 'ระงับ', cls: 'danger' },
 };
 
+// บัญชีที่สมัครผ่าน LINE ได้อีเมลภายในระบบแบบนี้ ไม่มีประโยชน์ที่จะแสดง
+const isLineEmail = (email) => /@line\.local$/i.test(email || '');
+
 const emptyForm = {
   full_name: '', email: '', phone: '', role: 'customer', status: 'active',
   password: '', barber_code: '', nickname: '', specialty: '', note: '',
@@ -152,7 +155,7 @@ export default function Users() {
             ))}
           </div>
           <input className="input" style={{ maxWidth: 260, height: 32 }}
-            placeholder="ค้นหาชื่อ อีเมล หรือเบอร์โทร"
+            placeholder="ค้นหาชื่อ ชื่อ LINE อีเมล หรือเบอร์โทร"
             value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
         </div>
 
@@ -177,10 +180,13 @@ export default function Users() {
                   <tr key={u.id} onClick={() => openDetail(u)} style={{ cursor: 'pointer' }}>
                     <td>
                       <div className="row gap-2">
-                        <Avatar name={u.full_name} />
+                        <Avatar name={u.full_name} src={u.line_picture_url || u.avatar_url} />
                         <div>
                           <div className="bold small">{u.full_name}</div>
-                          <div className="tiny muted">{u.email}</div>
+                          {u.line_linked && (
+                            <div className="tiny line-name">LINE: {u.line_display_name || 'เชื่อมแล้ว'}</div>
+                          )}
+                          {!isLineEmail(u.email) && <div className="tiny muted">{u.email}</div>}
                         </div>
                       </div>
                     </td>
@@ -261,7 +267,9 @@ export default function Users() {
           <Field label="ประเภทผู้ใช้">
             <select className="select" value={form.role}
               onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}>
-              {Object.entries(ROLE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              {Object.entries(ROLE_LABEL)
+                .filter(([k]) => me?.role === 'admin' || k !== 'admin' || form.role === 'admin')
+                .map(([k, v]) => <option key={k} value={k} disabled={k === 'admin' && me?.role !== 'admin'}>{v}</option>)}
             </select>
           </Field>
           <Field label="สถานะ">
@@ -314,10 +322,16 @@ export default function Users() {
         {detail && (
           <>
             <div className="row gap-3" style={{ marginBottom: 18 }}>
-              <Avatar name={detail.user.full_name} size="lg" />
+              <Avatar name={detail.user.full_name} size="lg"
+                src={detail.user.line_picture_url || detail.user.avatar_url} />
               <div>
                 <h2>{detail.user.full_name}</h2>
-                <div className="small muted">{detail.user.email} · {detail.user.phone || 'ไม่มีเบอร์โทร'}</div>
+                {detail.user.line_linked && (
+                  <div className="small line-name">LINE: {detail.user.line_display_name || 'เชื่อมแล้ว'}</div>
+                )}
+                <div className="small muted">
+                  {isLineEmail(detail.user.email) ? 'สมัครผ่าน LINE' : detail.user.email} · {detail.user.phone || 'ไม่มีเบอร์โทร'}
+                </div>
                 <div className="row gap-2 mt-1">
                   <span className="badge">{ROLE_LABEL[detail.user.role]}</span>
                   <span className={`badge ${STATUS_BADGE[detail.user.status].cls}`}>

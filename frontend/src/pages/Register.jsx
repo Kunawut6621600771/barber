@@ -1,14 +1,22 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
+import { safeTarget } from '../api/liff.js';
 import { Field, PasswordInput, Alert } from '../components/ui.jsx';
 import AuthVisual from '../components/AuthVisual.jsx';
+
+/** หน้าที่ส่งมาให้สมัคร (เช่น สแกน QR หน้าร้าน) — รับเฉพาะ path ภายในแอป */
+const safeFrom = (from) => (typeof from === 'string' && /^\/liff(\?|$)/.test(from) ? from : safeTarget(from));
 
 export default function Register() {
   const { register } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const from = safeFrom(location.state?.from);
 
-  const [form, setForm] = useState({ full_name: '', email: '', phone: '', password: '', confirm: '' });
+  const [form, setForm] = useState({
+    full_name: location.state?.lineName || '', email: '', phone: '', password: '', confirm: '',
+  });
   const [accept, setAccept] = useState(false);
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
@@ -38,7 +46,7 @@ export default function Register() {
         phone: form.phone,
         password: form.password,
       });
-      navigate('/app/my-queue', { replace: true });
+      navigate(from || '/app/my-queue', { replace: true });
     } catch (err) {
       setError(err.message);
       setFieldErrors(err.details || {});
@@ -102,7 +110,7 @@ export default function Register() {
           </form>
 
           <p className="auth-alt">
-            มีบัญชีอยู่แล้ว? <Link to="/login">เข้าสู่ระบบ</Link>
+            มีบัญชีอยู่แล้ว? <Link to="/login" state={from ? { from } : undefined}>เข้าสู่ระบบ</Link>
           </p>
         </div>
       </div>

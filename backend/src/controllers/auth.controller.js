@@ -65,7 +65,7 @@ export const login = asyncHandler(async (req, res) => {
   // ข้อความเดียวกันทั้งกรณีอีเมลผิดและรหัสผ่านผิด เพื่อไม่ให้เดาว่ามีอีเมลนี้ในระบบ
   const invalid = ApiError.unauthorized('อีเมลหรือรหัสผ่านไม่ถูกต้อง');
   if (!user || !user.password_hash) throw invalid;
-  if (!(await bcrypt.compare(req.body.password, user.password_hash))) throw invalid;
+  if (!(await bcrypt.compare(String(req.body?.password ?? ""), user.password_hash))) throw invalid;
   if (user.status !== 'active') throw ApiError.forbidden('บัญชีนี้ถูกระงับการใช้งาน');
 
   const refreshToken = crypto.randomBytes(48).toString('hex');
@@ -136,7 +136,7 @@ export const changePassword = asyncHandler(async (req, res) => {
 
   const { rows } = await query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
   const hash = rows[0]?.password_hash;
-  if (!hash || !(await bcrypt.compare(current, hash))) {
+  if (!hash || !(await bcrypt.compare(String(current), hash))) {
     throw ApiError.badRequest('ข้อมูลไม่ถูกต้อง', { current_password: 'รหัสผ่านปัจจุบันไม่ถูกต้อง' });
   }
 

@@ -188,7 +188,7 @@ export default function Members() {
                             <div className="tiny muted">{h.bill_no ? `บิล ${h.bill_no}` : ''}{h.note ? ` · ${h.note}` : ''}</div>
                           )}
                         </td>
-                        <td className="right mono bold" style={{ color: h.points > 0 ? 'var(--ok)' : 'var(--brand)' }}>
+                        <td className="right mono bold" style={{ color: h.points > 0 ? 'var(--ok)' : 'var(--danger)' }}>
                           {h.points > 0 ? '+' : ''}{h.points}
                         </td>
                         <td className="right mono">{h.balance_after}</td>
@@ -251,7 +251,7 @@ function AdjustModal({ member, onClose, onDone, toast }) {
     >
       <div className="dl" style={{ marginBottom: 14 }}>
         <dt>แต้มคงเหลือ</dt><dd>{member.loyalty_points} แต้ม</dd>
-        <dt>หลังปรับ</dt><dd style={{ color: after < 0 ? 'var(--brand)' : 'var(--ok)' }}>{after} แต้ม</dd>
+        <dt>หลังปรับ</dt><dd style={{ color: after < 0 ? 'var(--danger)' : 'var(--ok)' }}>{after} แต้ม</dd>
       </div>
 
       <Field label="จำนวนแต้ม" hint="ใส่ค่าลบเพื่อหักแต้ม เช่น -100">

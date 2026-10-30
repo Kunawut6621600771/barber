@@ -47,6 +47,25 @@ function toBase64(image) {
   return b64;
 }
 
+// รับเฉพาะรูปบิตแมป ไม่รับ SVG (มีสคริปต์ได้) เพราะพนักงานเปิดดูรูปนี้ในเบราว์เซอร์
+const SLIP_MAGIC = [
+  ['image/jpeg', (h) => h.startsWith('ffd8ff')],
+  ['image/png', (h) => h.startsWith('89504e47')],
+  ['image/gif', (h) => h.startsWith('47494638')],
+  ['image/webp', (h) => h.startsWith('52494646') && h.slice(16, 24) === '57454250'],
+];
+
+/** data URL / base64 -> { mime, buf } หรือ null ถ้าไม่ใช่รูปที่รับได้ (ดู mime จาก magic bytes ไม่เชื่อ client) */
+export function decodeSlipImage(image) {
+  if (typeof image !== 'string' || !image) return null;
+  const m = /^data:image\/[a-z0-9.+-]+;base64,(.+)$/i.exec(image);
+  const buf = Buffer.from(m ? m[1] : image, 'base64');
+  if (buf.length < 64) return null;
+  const hex = buf.subarray(0, 12).toString('hex');
+  const mime = SLIP_MAGIC.find(([, test]) => test(hex))?.[0];
+  return mime ? { mime, buf } : null;
+}
+
 const pick = (...vals) => vals.find((v) => v !== undefined && v !== null && v !== '');
 
 /** ดึงค่าจาก response ให้ทนต่อความต่างเล็กน้อยระหว่าง API v1 / v2 */
@@ -145,11 +164,21 @@ export async function verifySlip({ image, expectedAmount, notBefore }) {
   }
 
   // 3) ผู้รับต้องเป็นร้าน — ธนาคารมักปิดเลขบางส่วน จึงเทียบเฉพาะตัวเลขท้ายที่มองเห็น
-  if (config.payment.checkReceiver && slip.receiver?.account && config.payment.promptpayId) {
-    const shown = String(slip.receiver.account).replace(/[^0-9]/g, '');
-    const tail = shown.slice(-3);
-    if (tail.length === 3 && !config.payment.promptpayId.endsWith(tail)) {
-      throw new SlipError('บัญชีผู้รับเงินในสลิปไม่ใช่บัญชีของร้าน', 'receiver_mismatch');
+  if (config.payment.checkReceiver && config.payment.promptpayId) {
+    const shown = String(slip.receiver?.account || '').replace(/[^0-9]/g, '');
+    const tail = shown.slice(-4);
+    const norm = (v) => String(v || '').replace(/\s+|นาย|นางสาว|นาง|MR\.?|MRS\.?|MS\.?/gi, '').toLowerCase();
+    const shopName = norm(config.payment.accountName);
+    const slipName = norm(slip.receiver?.name);
+    const nameMatches = shopName && slipName && (shopName.includes(slipName.slice(0, 6)) || slipName.includes(shopName.slice(0, 6)));
+
+    if (tail.length >= 3) {
+      if (!config.payment.promptpayId.endsWith(tail)) {
+        throw new SlipError('บัญชีผู้รับเงินในสลิปไม่ใช่บัญชีของร้าน', 'receiver_mismatch');
+      }
+    } else if (!nameMatches) {
+      // อ่านผู้รับจากสลิปไม่ได้ -> ไม่ยอมรับอัตโนมัติ (กันสลิปโอนให้คนอื่นที่ยอดตรงกัน)
+      throw new SlipError('ตรวจสอบบัญชีผู้รับเงินในสลิปไม่ได้ กรุณาแจ้งพนักงานเพื่อยืนยันการชำระเงิน', 'receiver_unknown');
     }
   }
 

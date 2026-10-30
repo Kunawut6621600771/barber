@@ -35,5 +35,5 @@ export function useRealtime(handlers, enabled = true) {
       es.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled]);
+  }, [enabled, api.tokens.token]);
 }

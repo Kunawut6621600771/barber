@@ -2,17 +2,30 @@
  * Flex Message สำเร็จรูปสำหรับ LINE Bot ของร้าน
  * แยกจาก utils/line.js เพื่อให้ไฟล์นั้นเหลือแค่การคุยกับ LINE API
  */
+import { config } from '../config.js';
 import { appUrl } from './line.js';
 
+/** โทนเดียวกับหน้าเว็บ/โลโก้ร้าน: พื้นดำ ตัวอักษรเงิน ใช้สีเฉพาะป้ายสถานะ */
 export const COLORS = {
-  brand: '#DC2626',
-  brandDark: '#991B1B',
-  ink: '#111827',
-  muted: '#6B7280',
-  line: '#E5E7EB',
-  ok: '#15803D',
-  warn: '#B45309',
-  gold: '#B45309',
+  header: '#0A0A0A',
+  surface: '#141414',
+  brand: '#E4E4E7',      // เงินสว่าง ใช้เน้นตัวเลข/ราคา และพื้นปุ่มหลัก
+  ink: '#F4F4F5',
+  muted: '#A1A1AA',
+  line: '#2E2E31',
+  ok: '#22C55E',
+  warn: '#F59E0B',
+  danger: '#EF4444',
+};
+
+/** สีป้ายสถานะตาม tone */
+const TONE = { ok: COLORS.ok, warn: COLORS.warn, danger: COLORS.danger };
+
+/** ใส่พื้นดำให้ทุกส่วนของการ์ด (LINE ตั้งค่าเริ่มต้นเป็นพื้นขาว) */
+export const bubbleStyles = {
+  header: { backgroundColor: COLORS.header },
+  body: { backgroundColor: COLORS.surface },
+  footer: { backgroundColor: COLORS.surface, separator: true, separatorColor: COLORS.line },
 };
 
 const baht = (n) => `฿${Number(n || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 })}`;
@@ -29,19 +42,38 @@ export const kv = (label, value, opts = {}) => ({
   ],
 });
 
-const uriButton = (label, path, style = 'primary') => ({
+/**
+ * ปุ่มหลัก = พื้นเงิน ตัวอักษรดำ (LINE ใช้ตัวอักษรเข้มกับ style secondary)
+ * ปุ่มรอง = ตัวอักษรเงินไม่มีพื้น
+ */
+export const button = (action, primary = true) => ({
   type: 'button',
-  style,
   height: 'sm',
-  color: style === 'primary' ? COLORS.ink : undefined,
-  action: { type: 'uri', label: label.slice(0, 20), uri: appUrl(path) },
+  style: primary ? 'secondary' : 'link',
+  color: COLORS.brand,
+  action,
 });
 
-const msgButton = (label, message) => ({
-  type: 'button',
-  style: 'secondary',
-  height: 'sm',
-  action: { type: 'message', label: label.slice(0, 20), text: message },
+const uriButton = (label, path, style = 'primary') => button(
+  { type: 'uri', label: label.slice(0, 20), uri: appUrl(path) }, style === 'primary',
+);
+
+const msgButton = (label, message) => button(
+  { type: 'message', label: label.slice(0, 20), text: message }, false,
+);
+
+/** หัวการ์ด: แถบสีสถานะ + ชื่อร้าน + หัวข้อ */
+export const header = (shopName, title, tone = 'brand', extra = []) => ({
+  type: 'box', layout: 'vertical', paddingAll: '16px', backgroundColor: COLORS.header,
+  contents: [
+    {
+      type: 'box', layout: 'vertical', width: '36px', height: '4px', cornerRadius: '2px',
+      backgroundColor: TONE[tone] || COLORS.brand, contents: [],
+    },
+    text(shopName, { size: 'xs', color: COLORS.muted, weight: 'bold', margin: 'md' }),
+    text(title, { size: 'lg', color: TONE[tone] || COLORS.ink, weight: 'bold', margin: 'sm' }),
+    ...extra,
+  ],
 });
 
 /* ------------------------------------------------------------------ */
@@ -77,14 +109,8 @@ export function card({
     altText: `${title}${ticketNo ? ` — คิว ${ticketNo}` : ''}${message ? `: ${message}` : ''}`.slice(0, 390),
     contents: {
       type: 'bubble',
-      header: {
-        type: 'box', layout: 'vertical', paddingAll: '16px',
-        backgroundColor: tone === 'danger' ? COLORS.brandDark : tone === 'ok' ? COLORS.ok : COLORS.brand,
-        contents: [
-          text(shopName, { size: 'xs', color: '#FFFFFFCC', weight: 'bold' }),
-          text(title, { size: 'lg', color: '#FFFFFF', weight: 'bold', margin: 'sm' }),
-        ],
-      },
+      styles: bubbleStyles,
+      header: header(shopName, title, tone),
       body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: body.length ? body : [text(' ')] },
       footer: buttons.length ? {
         type: 'box', layout: 'vertical', spacing: 'sm',
@@ -94,6 +120,59 @@ export function card({
       } : undefined,
     },
   };
+}
+
+/** การ์ดแจ้งเตือนเรื่องคิว (push จากระบบ) — ปุ่มเดียวพาไปหน้าในแอป */
+export const queueCard = ({ buttonLabel = 'เปิดดูคิวของฉัน', path = '/app/my-queue', ...p }) => card({
+  ...p, buttons: [{ label: buttonLabel, path }],
+});
+
+/* ------------------------------------------------------------------ */
+/*  สถานะการชำระเงิน                                                    */
+/* ------------------------------------------------------------------ */
+
+const clock = (d) => new Intl.DateTimeFormat('th-TH', {
+  timeZone: config.timezone, hour: '2-digit', minute: '2-digit',
+}).format(new Date(d));
+
+/**
+ * แจ้งลูกค้าว่ารายการล่าสุด "ชำระเงินแล้ว" หรือ "ยังไม่ได้ชำระเงิน"
+ * @param {object} p แถวจากตาราง payments + service_name, ticket_no
+ */
+export function paymentCard(p, shopName) {
+  const rows = [
+    ['ยอดชำระ', baht(p.amount), { bold: true }],
+    ['บริการ', p.service_name],
+    ['เลขอ้างอิง', p.ref_code],
+  ];
+
+  if (p.status === 'paid') {
+    return card({
+      shopName,
+      tone: 'ok',
+      title: '✓ ชำระเงินแล้ว',
+      message: p.ticket_no
+        ? 'ได้รับเงินเรียบร้อย ออกบัตรคิวให้แล้ว ระบบจะแจ้งเตือนในแชทนี้เมื่อใกล้ถึงคิว'
+        : 'ได้รับเงินเรียบร้อย แต่ยังไม่ได้ออกบัตรคิว กรุณาติดต่อพนักงานที่หน้าร้าน',
+      ticketNo: p.ticket_no,
+      rows: [...rows, ['สถานะ', 'ชำระเงินแล้ว', { color: COLORS.ok, bold: true }],
+        ...(p.paid_at ? [['ชำระเมื่อ', `${clock(p.paid_at)} น.`]] : [])],
+      buttons: [{ label: 'ดูคิวของฉัน', path: '/app/my-queue' }],
+    });
+  }
+
+  const expired = p.status === 'expired' || new Date(p.expires_at) < new Date();
+  return card({
+    shopName,
+    tone: expired ? 'danger' : 'warn',
+    title: '✕ ยังไม่ได้ชำระเงิน',
+    message: expired
+      ? 'QR พร้อมเพย์หมดอายุแล้ว กรุณาทำรายการใหม่เพื่อรับบัตรคิว'
+      : `กรุณาสแกน QR พร้อมเพย์แล้วแนบสลิปภายใน ${clock(p.expires_at)} น. ระบบจะออกบัตรคิวให้ทันทีที่ตรวจสลิปผ่าน`,
+    rows: [...rows, ['สถานะ', expired ? 'หมดเวลาชำระ' : 'รอชำระเงิน', { color: expired ? COLORS.danger : COLORS.warn, bold: true }],
+      ...(p.fail_reason ? [['หมายเหตุ', p.fail_reason]] : [])],
+    buttons: [{ label: expired ? 'ทำรายการใหม่' : 'ชำระเงิน / แนบสลิป', path: '/app/take-queue' }],
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -112,15 +191,8 @@ export function serviceCarousel(services, shopName = 'Trim & Co.') {
   const bubbles = groups.map((group, idx) => ({
     type: 'bubble',
     size: 'mega',
-    header: {
-      type: 'box', layout: 'vertical', paddingAll: '16px', backgroundColor: COLORS.ink,
-      contents: [
-        text(shopName, { size: 'xs', color: '#FFFFFF99', weight: 'bold' }),
-        text(idx === 0 ? 'บริการและราคา' : `บริการและราคา (${idx + 1})`, {
-          size: 'lg', color: '#FFFFFF', weight: 'bold', margin: 'sm',
-        }),
-      ],
-    },
+    styles: bubbleStyles,
+    header: header(shopName, idx === 0 ? 'บริการและราคา' : `บริการและราคา (${idx + 1})`),
     body: {
       type: 'box', layout: 'vertical', spacing: 'md',
       contents: group.flatMap((s, i) => [
@@ -171,13 +243,8 @@ export function shopInfoCard(info) {
     altText: `${info.shop_name} · เปิด ${info.open_time}-${info.close_time} น.`,
     contents: {
       type: 'bubble',
-      header: {
-        type: 'box', layout: 'vertical', paddingAll: '16px', backgroundColor: COLORS.brand,
-        contents: [
-          text(info.shop_name, { size: 'lg', color: '#FFFFFF', weight: 'bold' }),
-          ...(info.tagline ? [text(info.tagline, { size: 'xs', color: '#FFFFFFCC', margin: 'xs' })] : []),
-        ],
-      },
+      styles: bubbleStyles,
+      header: header(info.tagline || 'ข้อมูลร้าน', info.shop_name),
       body: {
         type: 'box', layout: 'vertical', spacing: 'sm',
         contents: [
@@ -192,14 +259,11 @@ export function shopInfoCard(info) {
       footer: {
         type: 'box', layout: 'vertical', spacing: 'sm',
         contents: [
-          ...(info.map_url ? [{
-            type: 'button', style: 'primary', height: 'sm', color: COLORS.ink,
-            action: { type: 'uri', label: 'เปิดแผนที่', uri: info.map_url },
-          }] : []),
-          ...(info.phone ? [{
-            type: 'button', style: 'secondary', height: 'sm',
-            action: { type: 'uri', label: 'โทรหาร้าน', uri: `tel:${String(info.phone).replace(/[^0-9+]/g, '')}` },
-          }] : []),
+          ...(info.map_url ? [button({ type: 'uri', label: 'เปิดแผนที่', uri: info.map_url })] : []),
+          ...(info.phone ? [button(
+            { type: 'uri', label: 'โทรหาร้าน', uri: `tel:${String(info.phone).replace(/[^0-9+]/g, '')}` },
+            !info.map_url,
+          )] : []),
           ...buttons.map((b) => uriButton(b.label, b.path, 'secondary')),
         ],
       },
@@ -214,13 +278,8 @@ export function pointsCard({ name, points, tier, spendToNext, nextTier, redeemab
     altText: `คุณมี ${points} แต้ม (${tier})`,
     contents: {
       type: 'bubble',
-      header: {
-        type: 'box', layout: 'vertical', paddingAll: '16px', backgroundColor: COLORS.ink,
-        contents: [
-          text(name || 'สมาชิก', { size: 'xs', color: '#FFFFFF99' }),
-          text(`สมาชิกระดับ ${tier}`, { size: 'lg', color: '#FFFFFF', weight: 'bold', margin: 'xs' }),
-        ],
-      },
+      styles: bubbleStyles,
+      header: header(name || 'สมาชิก', `สมาชิกระดับ ${tier}`),
       body: {
         type: 'box', layout: 'vertical', spacing: 'sm',
         contents: [
@@ -256,13 +315,8 @@ export function barbersCard(barbers, shopName = 'Trim & Co.') {
     altText: `ช่างของ ${shopName} วันนี้`,
     contents: {
       type: 'bubble',
-      header: {
-        type: 'box', layout: 'vertical', paddingAll: '16px', backgroundColor: COLORS.brand,
-        contents: [
-          text(shopName, { size: 'xs', color: '#FFFFFFCC', weight: 'bold' }),
-          text('ช่างที่ร้านวันนี้', { size: 'lg', color: '#FFFFFF', weight: 'bold', margin: 'sm' }),
-        ],
-      },
+      styles: bubbleStyles,
+      header: header(shopName, 'ช่างที่ร้านวันนี้'),
       body: {
         type: 'box', layout: 'vertical', spacing: 'md',
         contents: barbers.length ? barbers.slice(0, 8).map((b) => ({
@@ -305,13 +359,8 @@ export function promosCard(promos, shopName = 'Trim & Co.') {
     altText: `โปรโมชันของ ${shopName}`,
     contents: {
       type: 'bubble',
-      header: {
-        type: 'box', layout: 'vertical', paddingAll: '16px', backgroundColor: COLORS.brand,
-        contents: [
-          text(shopName, { size: 'xs', color: '#FFFFFFCC', weight: 'bold' }),
-          text('โปรโมชันที่ใช้ได้ตอนนี้', { size: 'lg', color: '#FFFFFF', weight: 'bold', margin: 'sm' }),
-        ],
-      },
+      styles: bubbleStyles,
+      header: header(shopName, 'โปรโมชันที่ใช้ได้ตอนนี้'),
       body: {
         type: 'box', layout: 'vertical', spacing: 'lg',
         contents: promos.slice(0, 6).flatMap((p, i) => [

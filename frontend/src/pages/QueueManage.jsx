@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useRealtime } from '../api/realtime.js';
 import { useToast } from '../context/ToastContext.jsx';
@@ -24,6 +25,8 @@ export default function QueueManage() {
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('active');
+  const [searchParams] = useSearchParams();
+  const q = searchParams.get('q') || '';
   const [selectedId, setSelectedId] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -68,11 +71,17 @@ export default function QueueManage() {
   };
 
   const filtered = useMemo(() => {
+    // ค้นจากช่องค้นหาด้านบน (?q=) ด้วยเลขคิว ชื่อ หรือเบอร์โทร -> ค้นทุกสถานะ
+    const kw = q.trim().toLowerCase();
+    if (kw) {
+      return tickets.filter((t) => [t.ticket_no, t.customer_name, t.customer_phone]
+        .some((v) => String(v || '').toLowerCase().includes(kw)));
+    }
     if (tab === 'active') return tickets.filter((t) => ['called', 'serving'].includes(t.status));
     if (tab === 'waiting') return tickets.filter((t) => t.status === 'waiting');
     if (tab === 'done') return tickets.filter((t) => ['done', 'cancelled', 'no_show'].includes(t.status));
     return tickets;
-  }, [tickets, tab]);
+  }, [tickets, tab, q]);
 
   const counts = useMemo(() => ({
     active: tickets.filter((t) => ['called', 'serving'].includes(t.status)).length,
@@ -345,10 +354,11 @@ function IssueTicketModal({ open, onClose, services, barbers, onIssued }) {
     setResult(null);
     setErrors({});
     setForm({ service_id: services[0]?.id ?? '', barber_id: '', guest_name: '', guest_phone: '', customer_id: '' });
-    api.get('/users', { role: 'customer', limit: 100 })
+    api.get('/users', { role: 'customer', limit: 300 })
       .then((d) => setCustomers(d.data))
       .catch(() => setCustomers([]));
-  }, [open, services]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const submit = async (e) => {
     e.preventDefault();

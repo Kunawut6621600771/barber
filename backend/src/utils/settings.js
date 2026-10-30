@@ -85,6 +85,7 @@ export async function publicShopInfo(client = null) {
     close_time: s.close_time,
     open_days: s.open_days,
     booking_enabled: bool(s.booking_enabled, true),
+    booking_max_days: num(s.booking_max_days, 14),
     loyalty_enabled: bool(s.loyalty_enabled, true),
     points_per_baht: num(s.points_per_baht, 0.05),
     point_value_baht: num(s.point_value_baht, 1),

@@ -44,7 +44,7 @@ export function validate(body, schema) {
         break;
       case 'number':
         value = Number(value);
-        if (Number.isNaN(value)) errors[field] = `${label}ต้องเป็นตัวเลข`;
+        if (!Number.isFinite(value)) errors[field] = `${label}ต้องเป็นตัวเลข`;
         else if (rule.min !== undefined && value < rule.min) errors[field] = `${label}ต้องไม่น้อยกว่า ${rule.min}`;
         break;
       case 'bool':
@@ -55,7 +55,7 @@ export function validate(body, schema) {
         if (!rule.enum.includes(value)) errors[field] = `${label}ไม่ถูกต้อง (${rule.enum.join(', ')})`;
         break;
       case 'date':
-        if (Number.isNaN(Date.parse(value))) errors[field] = `${label}ไม่ถูกต้อง`;
+        if (!isRealDate(value)) errors[field] = `${label}ไม่ถูกต้อง`;
         else value = String(value).slice(0, 10);
         break;
       default:
@@ -66,6 +66,14 @@ export function validate(body, schema) {
 
   if (Object.keys(errors).length) throw ApiError.badRequest('ข้อมูลไม่ถูกต้อง', errors);
   return out;
+}
+
+/** วันที่ขึ้นต้นด้วย YYYY-MM-DD ที่มีอยู่จริงในปฏิทิน (2026-02-30 = ไม่ผ่าน) */
+export function isRealDate(value) {
+  const s = String(value ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}([T ].*)?$/.test(s) || Number.isNaN(Date.parse(s))) return false;
+  const ymd = s.slice(0, 10);
+  return new Date(`${ymd}T00:00:00Z`).toISOString().slice(0, 10) === ymd;
 }
 
 /** ตรวจความแข็งแรงของรหัสผ่าน */

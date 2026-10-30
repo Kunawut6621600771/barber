@@ -2,11 +2,11 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useToast } from '../context/ToastContext.jsx';
-import { Card, Empty, Loading, Alert, baht } from '../components/ui.jsx';
+import {
+  Card, Empty, Loading, Alert, ServiceThumb, baht, SERVICE_ICONS as ICONS,
+} from '../components/ui.jsx';
 import PaymentPanel from '../components/PaymentPanel.jsx';
 import LineQrCard from '../components/LineQrCard.jsx';
-
-const ICONS = { 'ตัดผม': '✂', 'สระผม': '🧴', 'โกนหนวด': '🪒', 'ทำสีผม': '🎨' };
 
 export default function TakeQueue() {
   const toast = useToast();
@@ -114,6 +114,11 @@ export default function TakeQueue() {
     return (
       <div className="page">
         <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr)', maxWidth: 520, margin: '0 auto' }}>
+          {result.payment?.status === 'paid' && (
+            <Alert kind="ok">
+              ชำระเงินสำเร็จ {baht(result.payment.amount)} · เลขอ้างอิง {result.payment.ref_code}
+            </Alert>
+          )}
           <div className="ticket-hero center" style={{ alignItems: 'center' }}>
             <div>
               <div className="eyebrow">รับบัตรคิวสำเร็จ</div>
@@ -187,7 +192,9 @@ export default function TakeQueue() {
                   onClick={() => setServiceId(s.id)}
                   role="button" tabIndex={0}
                   onKeyDown={(e) => e.key === 'Enter' && setServiceId(s.id)}>
-                  <div className="svc-thumb">{ICONS[s.category_name] || '✂'}</div>
+                  <ServiceThumb service={s}>
+                    {s.category_name && <span className="svc-tag">{s.category_name}</span>}
+                  </ServiceThumb>
                   <div className="body">
                     <div className="bold">{s.name}</div>
                     <div className="small muted">{s.description || s.category_name}</div>

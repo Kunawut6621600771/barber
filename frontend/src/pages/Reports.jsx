@@ -266,7 +266,7 @@ function WaitTimeReport({ data }) {
                       <td className="small bold">{s.service_name}</td>
                       <td className="right small">{s.tickets}</td>
                       <td className="right small">{minutes(s.avg_wait_min)}</td>
-                      <td className="right small" style={over ? { color: 'var(--brand)', fontWeight: 600 } : undefined}>
+                      <td className="right small" style={over ? { color: 'var(--danger)', fontWeight: 600 } : undefined}>
                         {minutes(s.avg_service_min)}
                       </td>
                       <td className="right small muted">{s.planned_min} นาที</td>

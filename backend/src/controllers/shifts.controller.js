@@ -32,7 +32,7 @@ async function expectedCash(client, shift) {
                     AND s.status IN ('paid','partial_refund','refunded')), 0)  AS change_given,
        COALESCE((SELECT SUM(r.amount) FROM sale_refunds r
                    JOIN sales s ON s.id = r.sale_id
-                  WHERE s.shift_id = $1 AND r.method = 'cash'), 0)             AS cash_refunds`,
+                  WHERE COALESCE(r.shift_id, s.shift_id) = $1 AND r.method = 'cash'), 0) AS cash_refunds`,
     [shift.id],
   );
   const r = rows[0];
@@ -48,7 +48,7 @@ async function expectedCash(client, shift) {
 }
 
 export const listShifts = asyncHandler(async (req, res) => {
-  const limit = Math.min(Number(req.query.limit) || 30, 100);
+  const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 30, 1), 100);
   const { rows } = await query(
     `SELECT * FROM v_shift_summary ORDER BY opened_at DESC LIMIT ${limit}`,
   );
@@ -173,8 +173,8 @@ export const cashMovement = asyncHandler(async (req, res) => {
     );
     await client.query(
       `UPDATE cash_shifts
-          SET cash_in  = cash_in  + CASE WHEN $2 = 'in'  THEN $3 ELSE 0 END,
-              cash_out = cash_out + CASE WHEN $2 = 'out' THEN $3 ELSE 0 END
+          SET cash_in  = cash_in  + CASE WHEN $2 = 'in'  THEN $3::numeric ELSE 0 END,
+              cash_out = cash_out + CASE WHEN $2 = 'out' THEN $3::numeric ELSE 0 END
         WHERE id = $1`,
       [open.id, d.direction, d.amount],
     );
