@@ -22,7 +22,7 @@ export const config = {
     expireMinutes: Number(process.env.PAYMENT_EXPIRE_MIN || 15),
     slipProvider: (process.env.SLIP_PROVIDER || 'easyslip').toLowerCase(), // easyslip | mock
     easyslipKey: process.env.EASYSLIP_API_KEY || '',
-    easyslipUrl: process.env.EASYSLIP_API_URL || 'https://api.easyslip.com/v2/verify/bank',
+    easyslipUrl: process.env.EASYSLIP_API_URL || 'https://developer.easyslip.com/api/v1/verify',
     // ตรวจเลขบัญชี/พร้อมเพย์ปลายทางบนสลิปให้ตรงกับร้าน (เทียบเลขท้ายที่ธนาคารไม่ได้ปิดไว้)
     checkReceiver: (process.env.SLIP_CHECK_RECEIVER ?? 'true') !== 'false',
   },

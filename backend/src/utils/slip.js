@@ -94,6 +94,13 @@ async function verifyEasySlip({ base64, expectedAmount }) {
     throw new SlipError('ยังไม่ได้ตั้งค่า EASYSLIP_API_KEY กรุณาแจ้งพนักงาน', 'not_configured');
   }
 
+  // v2 ใช้ field "base64" (field "image" สงวนไว้สำหรับอัปโหลดไฟล์ multipart ถ้าส่ง string จะ error)
+  // v1 ใช้ field "image"
+  const isV1 = /\/v1\//.test(config.payment.easyslipUrl);
+  const body = isV1
+    ? { image: base64, checkDuplicate: true }
+    : { base64, checkDuplicate: true, matchAmount: Number(expectedAmount) };
+
   let res;
   try {
     res = await fetch(config.payment.easyslipUrl, {
@@ -102,12 +109,7 @@ async function verifyEasySlip({ base64, expectedAmount }) {
         Authorization: `Bearer ${config.payment.easyslipKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        base64,
-        image: base64,          // v1 ใช้ชื่อ field นี้
-        checkDuplicate: true,
-        matchAmount: Number(expectedAmount),
-      }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(20_000),
     });
   } catch (err) {
